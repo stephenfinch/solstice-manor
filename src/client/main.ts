@@ -4,7 +4,7 @@ import { LanNetworkClient } from './network.js';
 import { buildSolsticeWorld, BuiltWorld } from './worldBuilder.js';
 import { FirstPersonController } from './playerController.js';
 import { SoundscapeEngine } from './audio.js';
-import { createHud, HudController } from './ui/hud.js';
+import { createHud, HudController, isTypingTarget } from './ui/hud.js';
 import { createModals, ModalController } from './ui/modals.js';
 import { createTools, ToolsController } from './ui/tools.js';
 import { createHintMinigame, HintMinigameController } from './ui/hintMinigame.js';
@@ -331,9 +331,8 @@ function initThreeAndUi(): void {
   // Keyboard shortcuts
   window.addEventListener('keydown', (e) => {
     if (!inGame || !gameState) return;
-    // Don't hijack typing inside inputs/textareas
-    const tag = (e.target as HTMLElement)?.tagName;
-    if (tag === 'INPUT' || tag === 'TEXTAREA') {
+    // Don't hijack typing inside text inputs/textareas/selects (allow range sliders!)
+    if (isTypingTarget(e.target)) {
       if (e.code === 'Escape') {
         (e.target as HTMLElement).blur();
       }
@@ -410,6 +409,8 @@ function enterManor(): void {
   if (me) {
     controller.teleport(me.transform.x, me.transform.y, me.transform.z, me.transform.yaw);
   }
+  tools.updateState(gameState);
+  hud.update(gameState, myPlayerId, controller.currentZone, controller.heldItem);
   hud.setPointerLocked(false, gameState.roomCode);
   hud.showToast('Welcome to Solstice Manor! Read Master Vance\'s Ledger on the Foyer lectern to begin.', 'info');
   controller.requestPointerLock();
@@ -447,10 +448,21 @@ function bindLobbyEvents(): void {
     }
     try {
       await network.connect();
+      let savedPlayerId: string | undefined;
+      try {
+        const raw = sessionStorage.getItem('solstice_session');
+        if (raw) {
+          const parsed = JSON.parse(raw) as { roomCode?: string; playerId?: string };
+          if (parsed.roomCode === code) savedPlayerId = parsed.playerId;
+        }
+      } catch {
+        // ignore
+      }
       network.send({
         type: 'join_room',
         roomCode: code,
         playerName: playerNameInput.value.trim() || 'Apprentice 2',
+        playerId: savedPlayerId,
       });
     } catch (err) {
       showLobbyError((err as Error).message);
@@ -486,6 +498,18 @@ function bindNetworkMessages(): void {
       myPlayerId = msg.playerId;
       myPlayerSlot = msg.playerSlot;
       gameState = msg.state;
+      try {
+        sessionStorage.setItem(
+          'solstice_session',
+          JSON.stringify({
+            roomCode: msg.roomCode,
+            playerId: msg.playerId,
+            playerName: msg.state.players[msg.playerId]?.name ?? 'Apprentice',
+          }),
+        );
+      } catch {
+        // ignore storage errors
+      }
 
       lobbyJoinForm.classList.add('hidden');
       lobbyWaiting.classList.remove('hidden');
@@ -503,6 +527,7 @@ function bindNetworkMessages(): void {
       } else {
         modals.refreshIfOpen(gameState);
         tools.updateState(gameState);
+        hud.update(gameState, myPlayerId, controller.currentZone, controller.heldItem);
 
         // Auto-open Hint Minigame overlay if partner started it or fate_draw began!
         if (

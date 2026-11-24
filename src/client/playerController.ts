@@ -74,7 +74,14 @@ export class FirstPersonController {
 
   public requestPointerLock(): void {
     if (document.pointerLockElement !== this.domElement) {
-      this.domElement.requestPointerLock?.();
+      try {
+        const res = this.domElement.requestPointerLock?.() as unknown as Promise<void> | undefined;
+        if (res && typeof res.catch === 'function') {
+          res.catch(() => {});
+        }
+      } catch {
+        // Ignore browser SecurityError/NotAllowedError when pointer lock is disallowed
+      }
     }
   }
 
@@ -170,6 +177,30 @@ export class FirstPersonController {
 
         const vx = (fx * forward + rx * strafe) * speed * clampedDt;
         const vz = (fz * forward + rz * strafe) * speed * clampedDt;
+
+        // If a closing door (e.g. Tea North Grille) ever closed on top of the player,
+        // smoothly nudge them out to the nearest clear side so they can never be trapped!
+        if (this.collidesAt(this.x, this.y, this.z, state)) {
+          const offsets = [
+            [0.45, 0],
+            [-0.45, 0],
+            [0, 0.45],
+            [0, -0.45],
+            [0.9, 0],
+            [-0.9, 0],
+            [0, 0.9],
+            [0, -0.9],
+          ];
+          for (const [ox, oz] of offsets) {
+            const ny = computeFloorHeight(this.x + ox, this.y, this.z + oz);
+            if (!this.collidesAt(this.x + ox, ny, this.z + oz, state)) {
+              this.x += ox;
+              this.z += oz;
+              this.y = ny;
+              break;
+            }
+          }
+        }
 
         // Axis-separated collision resolution for buttery wall sliding!
         const tryX = this.x + vx;

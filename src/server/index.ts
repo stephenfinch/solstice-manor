@@ -40,6 +40,7 @@ function generateRoomCode(): string {
 interface ClientSocket extends WebSocket {
   playerId?: string;
   roomCode?: string;
+  isAlive?: boolean;
 }
 
 const rooms = new Map<string, GameRoom>();
@@ -121,7 +122,25 @@ function send(ws: WebSocket, msg: ServerMessage): void {
   }
 }
 
+// Heartbeat to detect dropped Wi-Fi / sleeping laptops cleanly so slots free up for reconnect
+setInterval(() => {
+  for (const client of wss.clients) {
+    const cs = client as ClientSocket;
+    if (cs.isAlive === false) {
+      cs.terminate();
+      continue;
+    }
+    cs.isAlive = false;
+    cs.ping();
+  }
+}, 8000);
+
 wss.on('connection', (ws: ClientSocket) => {
+  ws.isAlive = true;
+  ws.on('pong', () => {
+    ws.isAlive = true;
+  });
+
   ws.on('message', (raw) => {
     let msg: ClientMessage;
     try {
