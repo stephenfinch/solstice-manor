@@ -2,6 +2,12 @@
 
 A sunlit, cozy, non-scary **first-person 3D browser escape room** built for **two players over LAN** (or two browser tabs on one machine). Explore interconnected indoor studies, glass conservatories, clockwork workshops, an upper observatory sky-deck, and open-air courtyards to recover the four Resonance Cores and open the **Grand Solstice Gate**.
 
+## Trailer
+
+https://github.com/user-attachments/assets/25bb9b76-ea25-465c-a69e-a83dc0f83346
+
+*(Direct file: [solstice-manor-trailer.mp4](./solstice-manor-trailer.mp4))*
+
 ## Quick Start (LAN Multiplayer)
 
 ```bash
