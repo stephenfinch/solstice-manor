@@ -406,3 +406,77 @@ export const WORLD_COLLIDERS: BoxCollider[] = [
   { id: 'obs_rail_ramp_guard', minX: 8.5, maxX: 8.9, minY: 4.5, maxY: 6.5, minZ: -17.6, maxZ: -13.0 },
   { id: 'obs_rail_e', minX: 11.8, maxX: 12.2, minY: 4.5, maxY: 6.5, minZ: -20.6, maxZ: -10.4 },
 ];
+
+// Slab-method ray-vs-AABB intersection returning entry distance t >= 0, or null if no hit
+export function rayIntersectBox(
+  ox: number,
+  oy: number,
+  oz: number,
+  dx: number,
+  dy: number,
+  dz: number,
+  box: BoxCollider,
+): number | null {
+  let tmin = 0;
+  let tmax = Infinity;
+
+  const axes: [number, number, number, number][] = [
+    [ox, dx, box.minX, box.maxX],
+    [oy, dy, box.minY, box.maxY],
+    [oz, dz, box.minZ, box.maxZ],
+  ];
+
+  for (const [o, d, bmin, bmax] of axes) {
+    if (Math.abs(d) < 1e-8) {
+      if (o < bmin || o > bmax) return null;
+    } else {
+      let t1 = (bmin - o) / d;
+      let t2 = (bmax - o) / d;
+      if (t1 > t2) {
+        const tmp = t1;
+        t1 = t2;
+        t2 = tmp;
+      }
+      tmin = Math.max(tmin, t1);
+      tmax = Math.min(tmax, t2);
+      if (tmin > tmax) return null;
+    }
+  }
+  return tmin;
+}
+
+/**
+ * Returns true if any solid wall, closed door, glass partition, or blocking hedge
+ * lies strictly between ray origin and `targetDist` (with a small margin for wall-mounted items).
+ */
+export function isLineOfSightBlocked(
+  ox: number,
+  oy: number,
+  oz: number,
+  dx: number,
+  dy: number,
+  dz: number,
+  targetDist: number,
+  doors: Record<DoorId, boolean>,
+  extraOccluders: BoxCollider[] = [],
+  ignoreDoorId?: DoorId,
+): boolean {
+  const limit = Math.max(0, targetDist - 0.16);
+  if (limit <= 0) return false;
+
+  const checkList = (list: BoxCollider[]): boolean => {
+    for (const box of list) {
+      if (box.doorId) {
+        if (doors[box.doorId]) continue; // Open door doesn't block
+        if (ignoreDoorId && box.doorId === ignoreDoorId) continue; // Can click the locked door itself
+      }
+      const t = rayIntersectBox(ox, oy, oz, dx, dy, dz, box);
+      if (t !== null && t > 0.02 && t < limit) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  return checkList(WORLD_COLLIDERS) || checkList(extraOccluders);
+}

@@ -241,8 +241,18 @@ function createDrum(
   };
 }
 
-function digitFaces(): HTMLElement[] {
-  return Array.from({ length: 10 }, (_, d) => el('div', { class: 'digit-face' }, d));
+function digitFaces(max = 9): HTMLElement[] {
+  return Array.from({ length: max + 1 }, (_, d) => el('div', { class: 'digit-face' }, d));
+}
+
+function clampClockDigits(digits: Quad): Quad {
+  let a = digits[0] ? 1 : 0;
+  let b = mod(digits[1], 10);
+  const c = Math.max(0, Math.min(5, Math.floor(digits[2])));
+  const d = mod(digits[3], 10);
+  if (a === 0 && b === 0) b = 1;
+  if (a === 1 && b > 2) b = 2;
+  return [a, b, c, d];
 }
 
 /** − value + stepper used by the sundial and orrery. */
@@ -316,12 +326,38 @@ function clockView(cb: ModalCallbacks, initial: WorldState): View {
   const badge = solvedBadge('The clock chimes. The Twin Courtyard Levers are energized!');
   const commit = (index: number, delta: number): void => {
     if (solved) return;
-    const digits = withAt(shadow.value, index, mod(shadow.value[index] + delta, 10));
-    shadow.edit(digits);
-    cb.onInteract('p1_clock_set', { digits });
+    const [a, b, c, d] = shadow.value;
+    let next: Quad;
+    if (index === 0) {
+      const nextA = a === 0 ? 1 : 0;
+      next = clampClockDigits([nextA, b, c, d]);
+    } else if (index === 1) {
+      if (a === 0) {
+        // Valid hours 01..09
+        const nextB = mod(b - 1 + delta, 9) + 1;
+        next = [0, nextB, c, d];
+      } else {
+        // Valid hours 10..12
+        const nextB = mod(b + delta, 3);
+        next = [1, nextB, c, d];
+      }
+    } else if (index === 2) {
+      next = [a, b, mod(c + delta, 6), d];
+    } else {
+      next = [a, b, c, mod(d + delta, 10)];
+    }
+    shadow.edit(next);
+    cb.onInteract('p1_clock_set', { digits: next });
   };
   const names = ['Hour tens (A)', 'Hour ones (B)', 'Minute tens (C)', 'Minute ones (D)'];
-  const drums = names.map((name, i) => createDrum(digitFaces(), 76, name, (d) => commit(i, d)));
+  const binaryFaces = () => [0, 1, 0, 1, 0, 1].map((n) => el('div', { class: 'digit-face' }, n));
+  const drums = [
+    createDrum(binaryFaces(), 76, names[0], (d) => commit(0, d)),
+    createDrum(digitFaces(9), 76, names[1], (d) => commit(1, d)),
+    createDrum(digitFaces(5), 76, names[2], (d) => commit(2, d)),
+    createDrum(digitFaces(9), 76, names[3], (d) => commit(3, d)),
+  ];
+  let aFaceIdx = initial.puzzles.clockDigits[0] ? 1 : 0;
   const controls = el(
     'div',
     { class: 'controls drum-row' },
@@ -334,14 +370,18 @@ function clockView(cb: ModalCallbacks, initial: WorldState): View {
     'div',
     { class: 'puzzle puzzle-clock' },
     badge.node,
-    intro('Turn the four brass wheels to the awakening hour. The ledger on the lectern holds the rules.'),
+    intro('Turn the four brass wheels to the awakening hour (01:00–12:59). The ledger on the lectern holds the rules.'),
     el('div', { class: 'clock-top' }, face, readout),
     controls,
   );
-  const shadow = new Shadow<Quad>(initial.puzzles.clockDigits, render);
+  const shadow = new Shadow<Quad>(clampClockDigits(initial.puzzles.clockDigits), render);
   function render(): void {
     const [a, b, c, d] = shadow.value;
-    drums.forEach((drum, i) => drum.set(shadow.value[i], String(shadow.value[i])));
+    if (aFaceIdx % 2 !== a) aFaceIdx = (aFaceIdx + 1) % 6;
+    drums[0].set(aFaceIdx, String(a));
+    drums[1].set(b, String(b));
+    drums[2].set(c, String(c));
+    drums[3].set(d, String(d));
     readout.textContent = `${a}${b}:${c}${d}`;
     const hours = a * 10 + b;
     const mins = c * 10 + d;
@@ -1128,8 +1168,12 @@ function gearView(cb: ModalCallbacks, initial: WorldState, has18: () => boolean)
     const parts: SVGElement[] = [];
     const draw = (cx: number, teeth: number, rpm: number, cw: boolean, label: string, cls: string): SVGGElement => {
       const spin = svg('path', { d: gearPath(teeth, radius(teeth) + 2, 6), class: `bench-gear ${cls}` });
-      spin.style.animationDuration = `${60 / rpm}s`;
-      spin.style.animationDirection = cw ? 'normal' : 'reverse';
+      if (rpm > 0) {
+        spin.style.animationDuration = `${60 / rpm}s`;
+        spin.style.animationDirection = cw ? 'normal' : 'reverse';
+      } else {
+        spin.style.animation = 'none';
+      }
       return svg(
         'g',
         { transform: `translate(${cx} 84)` },
@@ -1142,11 +1186,18 @@ function gearView(cb: ModalCallbacks, initial: WorldState, has18: () => boolean)
     let prev = radius(12);
     shadow.value.forEach((teeth, i) => {
       const r = teeth ? radius(Number(teeth)) : EMPTY_R;
-      x += prev + r + (teeth ? 1 : 4);
-      prev = r + (teeth ? 0 : 4);
+      x += prev + r + (teeth ? 1 : 12);
+      prev = r + (teeth ? 0 : 12);
       const speed = speeds[i];
-      if (teeth && speed) {
-        const g = draw(x, Number(teeth), speed, i % 2 === 1, teeth, speed === SHAFT_TARGETS[i] ? 'true' : '');
+      if (teeth && speed !== null) {
+        const g = draw(
+          x,
+          Number(teeth),
+          speed,
+          i % 2 === 1,
+          teeth,
+          speed > 0 && speed === SHAFT_TARGETS[i] ? 'true' : speed === 0 ? 'idle' : '',
+        );
         g.classList.add('bench-click');
         g.addEventListener('click', () => clickShaft(i));
         parts.push(g);
@@ -1183,9 +1234,9 @@ function gearView(cb: ModalCallbacks, initial: WorldState, has18: () => boolean)
     shafts.forEach((s, i) => {
       const teeth = shadow.value[i];
       const speed = speeds[i];
-      s.rpm.textContent = speed === null ? '— RPM' : `${speed} RPM`;
+      s.rpm.textContent = speed === null ? '— RPM' : speed === 0 ? '0 RPM (unmeshed)' : `${speed} RPM`;
       s.mounted.textContent = teeth ? `${teeth}T mounted` : held ? `Mount ${held}T here` : 'Empty';
-      s.btn.classList.toggle('on-target', speed === SHAFT_TARGETS[i]);
+      s.btn.classList.toggle('on-target', speed !== null && speed > 0 && speed === SHAFT_TARGETS[i]);
       s.btn.classList.toggle('ready', held !== null);
     });
     for (const t of tray) {
@@ -1514,6 +1565,27 @@ export function createModals(callbacks: ModalCallbacks): ModalController {
     p9_gear_train: (s) => gearView(callbacks, s, () => has18),
     p11_orrery: (s) => orreryView(callbacks, s),
     p13_solstice_gate: (s) => gateView(callbacks, s),
+    easter_egg_gavin: () => ({
+      title: 'Small Brass Plaque',
+      size: 'narrow',
+      root: el(
+        'div',
+        { class: 'puzzle' },
+        el(
+          'div',
+          { class: 'clue-card' },
+          el('div', { class: 'clue-zone' }, 'Grand Foyer · Hearthside'),
+          el('h4', {}, 'An Unusually Specific Engraving'),
+          el(
+            'div',
+            { class: 'clue-body' },
+            el('blockquote', {}, '"Gavin is the best and is my favorite coworker."'),
+            el('p', {}, 'Stamped in tiny letters underneath: — Definitely Master Vance, and not Gavin.'),
+          ),
+        ),
+      ),
+      update() {},
+    }),
   };
 
   function mount(next: View, state: WorldState): void {

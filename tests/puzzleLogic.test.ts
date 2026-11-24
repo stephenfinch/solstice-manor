@@ -23,6 +23,12 @@ describe('Solstice Manor — Complete 2-Player Escape Room Verification', () => 
     // Hint minigame starts UNLOCKED!
     expect(room.state.hintCooldownEndsAt).toBe(0);
 
+    // P1A: Grandfather Clock enforces real 12-hour clock bounds (01:00..12:59)
+    room.handleInteract(p1.id, 'p1_clock_set', { digits: [9, 9, 9, 9] });
+    expect(room.state.puzzles.clockDigits).toEqual([1, 2, 5, 9]);
+    room.handleInteract(p1.id, 'p1_clock_set', { digits: [0, 0, 6, 0] });
+    expect(room.state.puzzles.clockDigits).toEqual([0, 1, 5, 0]);
+
     // P1A: Grand Foyer Clock (09:35)
     room.handleInteract(p1.id, 'p1_clock_set', { digits: [0, 9, 3, 5] });
     expect(room.state.solvedPuzzles.p1_foyer_clock).toBe(true);
@@ -120,6 +126,9 @@ describe('Solstice Manor — Complete 2-Player Escape Room Verification', () => 
     room.handlePickup(p1.id, 'core_sun');
 
     // P9: Workshop Gear-Train -> Sky-Lift Key
+    // Unmeshed gears after an empty shaft must stay stationary (0 RPM)!
+    expect(computeGearSpeeds([null, '18', '36'])).toEqual([null, 0, 0]);
+    expect(computeGearSpeeds(['24', null, '36'])).toEqual([30, null, 0]);
     expect(computeGearSpeeds(SOLUTIONS.p9_gears)).toEqual([30, 40, 20]);
     room.handleInteract(p1.id, 'p9_gears_set', { slots: SOLUTIONS.p9_gears });
     expect(room.state.solvedPuzzles.p9_gear_train).toBe(true);

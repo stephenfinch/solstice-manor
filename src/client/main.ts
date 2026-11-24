@@ -109,14 +109,14 @@ function renderWaitingPlayers(state: WorldState): void {
 
   playersSlotsEl.innerHTML = `
     <div class="player-slot-card ${p1 ? 'connected' : ''}">
-      <div class="slot-badge">APPRENTICE 1</div>
-      <div class="slot-name">${p1 ? escapeHtml(p1.name) : 'Waiting...'}</div>
-      <div class="slot-status">${p1 ? '● Connected' : '○ Open Slot'}</div>
+      <span class="slot-dot"></span>
+      <span class="slot-name">${p1 ? escapeHtml(p1.name) : 'Waiting…'}</span>
+      <span class="slot-badge">Player 1</span>
     </div>
     <div class="player-slot-card ${p2 ? 'connected' : ''}">
-      <div class="slot-badge">APPRENTICE 2</div>
-      <div class="slot-name">${p2 ? escapeHtml(p2.name) : 'Waiting for Partner on LAN...'}</div>
-      <div class="slot-status">${p2 ? '● Connected' : '○ Open Slot'}</div>
+      <span class="slot-dot"></span>
+      <span class="slot-name">${p2 ? escapeHtml(p2.name) : 'Waiting for partner…'}</span>
+      <span class="slot-badge">Player 2</span>
     </div>
   `;
 }
@@ -125,15 +125,12 @@ function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 }
 
+function isBlockingOverlayOpen(): boolean {
+  return !inGame || modals.isOpen() || hintMinigame.isOpen() || victoryShown;
+}
+
 function isAnyOverlayOpen(): boolean {
-  return (
-    !inGame ||
-    modals.isOpen() ||
-    tools.isNotebookOpen() ||
-    tools.isCalculatorOpen() ||
-    hintMinigame.isOpen() ||
-    victoryShown
-  );
+  return isBlockingOverlayOpen() || tools.isNotebookOpen() || tools.isCalculatorOpen();
 }
 
 function openOracleMinigame(): void {
@@ -193,14 +190,14 @@ function triggerCoopPing(): void {
 function toggleUvLamp(): void {
   if (!gameState || !inGame) return;
   if (!gameState.inventory.includes('tool_uv_lamp')) {
-    hud.showToast('You have not found the Aether UV Lantern yet! Explore the Tea Parlor.', 'warning');
+    hud.showToast('No UV Lantern in inventory.', 'warning');
     audio.playSfx('error');
     return;
   }
   controller.uvOn = !controller.uvOn;
   controller.heldItem = controller.uvOn ? 'tool_uv_lamp' : controller.heldItem;
   audio.playSfx('uv_toggle', { on: controller.uvOn });
-  hud.showToast(controller.uvOn ? '🔦 Aether UV Lantern ON — shine it on blank canvases!' : '🔦 Aether UV Lantern OFF', 'info');
+  hud.showToast(controller.uvOn ? 'UV Lantern on' : 'UV Lantern off', 'info');
 }
 
 function initThreeAndUi(): void {
@@ -224,7 +221,7 @@ function initThreeAndUi(): void {
         hud.setPointerLocked(locked || isAnyOverlayOpen(), gameState.roomCode);
       }
     },
-    canMove: () => !isAnyOverlayOpen(),
+    canMove: () => !isBlockingOverlayOpen(),
   });
 
   hud = createHud({
@@ -305,8 +302,9 @@ function initThreeAndUi(): void {
   });
 
   // Clicking the 3D canvas locks pointer (or interacts if already locked!)
+  // Works even when Notebook or Calculator is open so you can look & walk with them visible!
   renderer.domElement.addEventListener('mousedown', (e) => {
-    if (!inGame || isAnyOverlayOpen()) return;
+    if (!inGame || isBlockingOverlayOpen()) return;
     audio.init();
     if (!controller.isPointerLocked) {
       controller.requestPointerLock();
@@ -412,7 +410,6 @@ function enterManor(): void {
   tools.updateState(gameState);
   hud.update(gameState, myPlayerId, controller.currentZone, controller.heldItem);
   hud.setPointerLocked(false, gameState.roomCode);
-  hud.showToast('Welcome to Solstice Manor! Read Master Vance\'s Ledger on the Foyer lectern to begin.', 'info');
   controller.requestPointerLock();
 }
 
@@ -623,7 +620,7 @@ function animate(now: number): void {
 
       // Update HUD
       hud.update(gameState, myPlayerId, controller.currentZone, controller.heldItem);
-      hud.setInteractPrompt(isAnyOverlayOpen() ? null : controller.targetedLabel);
+      hud.setInteractPrompt(isBlockingOverlayOpen() ? null : controller.targetedLabel);
 
       // Stream player transform to LAN partner at 20Hz
       if (now - lastTransformSentAt >= 50) {

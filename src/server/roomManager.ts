@@ -87,8 +87,7 @@ export class GameRoom {
       puzzles: createInitialPuzzleStates(),
       discoveredClues: [],
       unlockedHints: [],
-      sharedNotes:
-        'SOLSTICE MANOR — SHARED FIELD NOTES\n• Work together across indoor & outdoor rooms!\n• Keys are single-use; tools like the UV Lamp & Prism are reusable.\n',
+      sharedNotes: '',
       hintCooldownEndsAt: 0, // Starts UNLOCKED!
       hintAttemptsCount: 0,
       hintWinsCount: 0,
@@ -240,11 +239,7 @@ export class GameRoom {
       if (!this.state.solvedPuzzles.p2_tea_cipher) {
         this.state.doors.tea_north_grille = foyerPlate.length > 0;
         if (wasEmpty && foyerPlate.length > 0) {
-          this.emitEvent(
-            'coop_prompt',
-            'Foyer Brass Plate depressed — North Tea Booth grille is held open!',
-            'plate_step',
-          );
+          this.emitEvent('sfx', '', 'plate_step');
         }
       }
     }
@@ -257,20 +252,12 @@ export class GameRoom {
       changed = true;
       if (!pz.mirror2Latched) {
         if (wasEmpty && sunPad.length > 0) {
-          this.emitEvent(
-            'coop_prompt',
-            'Courtyard Sun-Pad held! Mirror 2 clutch is engaged — align the mirrors!',
-            'plate_step',
-          );
+          this.emitEvent('sfx', '', 'plate_step');
           this.checkLightRelaySolved();
         } else if (sunPad.length === 0 && pz.mirrorAngles[1] !== 0) {
           // Spring-loaded Mirror 2 drifts back when pad is released before latching!
           pz.mirrorAngles[1] = 0;
-          this.emitEvent(
-            'info',
-            'Mirror 2 sprang back! Keep one apprentice on the Courtyard Sun-Pad while aligning the beam.',
-            'dial_click',
-          );
+          this.emitEvent('sfx', '', 'dial_click');
         }
       }
     }
@@ -326,7 +313,7 @@ export class GameRoom {
     const def = ITEMS[itemId];
     this.emitEvent(
       'item_picked',
-      `Acquired ${def.icon} ${def.name}${def.consumable && def.category === 'key' ? ' (Single-Use Key)' : !def.consumable ? ' (Reusable Tool)' : ''}!`,
+      `Picked up ${def.name}${def.consumable && def.category === 'key' ? ' (single-use)' : !def.consumable ? ' (reusable)' : ''}.`,
       'pickup',
       { itemId },
     );
@@ -395,7 +382,7 @@ export class GameRoom {
       const keyDef = ITEMS[requiredKey];
       this.emitEvent(
         'key_consumed',
-        `🔓 Used ${keyDef.name} — door unlocked! (Key consumed in lock.)`,
+        `Unlocked with ${keyDef.name} (key consumed).`,
         'key_unlock',
         { doorId, keyId: requiredKey },
       );
@@ -403,18 +390,15 @@ export class GameRoom {
       return;
     }
 
-    // Non-key mechanical doors give helpful diegetic feedback
+    // Non-key mechanical doors give subtle diegetic feedback without spoiling the puzzle
     const lockedHints: Record<DoorId, string> = {
-      courtyard_door:
-        'Sealed by the Foyer Awakening Clock and Twin Courtyard Levers!',
-      tea_north_grille:
-        'Controlled by the Brass Floor Plate in the Foyer (or solve the Tea Parlor Cipher to latch it open!).',
-      study_door: 'Requires the Brass Study Key.',
-      conservatory_door: 'Requires the Conservatory Glass Key.',
-      workshop_door: 'Sealed by the Equinox Sundial in the Sunlit Courtyard!',
-      skylift_door: 'Requires the Sky-Lift Brass Key.',
-      solstice_gate:
-        'Insert & align all 4 Resonance Cores, then stand on BOTH Twin Solstice Pads together!',
+      courtyard_door: 'Sealed by a mechanism in the foyer.',
+      tea_north_grille: 'Held shut by a counterweight latch.',
+      study_door: 'Locked — requires the Brass Study Key.',
+      conservatory_door: 'Locked — requires the Conservatory Glass Key.',
+      workshop_door: 'Sealed by an outdoor mechanism.',
+      skylift_door: 'Locked — requires the Sky-Lift Brass Key.',
+      solstice_gate: 'The Solstice Gate remains sealed.',
     };
     this.hooks.sendTo(playerId, {
       type: 'world_event',
@@ -443,11 +427,7 @@ export class GameRoom {
     if (!this.state.puzzles.uvRevealedFrames.includes(frameIndex)) {
       this.state.puzzles.uvRevealedFrames.push(frameIndex);
       this.handleDiscoverClue(`clue_uv_frame_${frameIndex}`);
-      this.emitEvent(
-        'info',
-        `✨ Invisible Aether Ink revealed on Study Frame #${frameIndex + 1}! Logged to Notebook.`,
-        'uv_toggle',
-      );
+      this.emitEvent('info', 'Hidden ink revealed — saved to Notebook.', 'uv_toggle');
       this.syncAll();
     }
   }
@@ -471,7 +451,7 @@ export class GameRoom {
       z,
       createdAt: now,
     });
-    this.emitEvent('coop_ping', `📍 ${p.name} pinged a location!`, 'ping');
+    this.emitEvent('coop_ping', `${p.name} pinged a location.`, 'ping');
     this.syncAll();
   }
 
@@ -490,24 +470,22 @@ export class GameRoom {
     const now = Date.now();
 
     switch (targetId) {
-      // --- P1A: Grand Foyer Clock ---
+      // --- P1A: Grand Foyer Clock (valid 12-hour clock times: 01:00..12:59) ---
       case 'p1_clock_set': {
         if (solved.p1_foyer_clock) return;
         const digits = payload.digits as number[];
         if (!Array.isArray(digits) || digits.length !== 4) return;
-        pz.clockDigits = digits.map((d) => ((Math.floor(Number(d)) % 10) + 10) % 10) as [
-          number,
-          number,
-          number,
-          number,
-        ];
-        if (pz.clockDigits.every((d, i) => d === SOLUTIONS.p1_clock[i])) {
+        const raw = digits.map((d) => Math.floor(Number(d) || 0));
+        const a = Math.max(0, Math.min(1, raw[0]));
+        let b = Math.max(0, Math.min(9, raw[1]));
+        if (a === 0 && b === 0) b = 1;
+        if (a === 1 && b > 2) b = 2;
+        const c = Math.max(0, Math.min(5, raw[2]));
+        const d = Math.max(0, Math.min(9, raw[3]));
+        pz.clockDigits = [a, b, c, d];
+        if (pz.clockDigits.every((v, i) => v === SOLUTIONS.p1_clock[i])) {
           solved.p1_foyer_clock = true;
-          this.emitEvent(
-            'puzzle_solved',
-            '🔔 09:35! The Grandfather Clock chimes — Twin Courtyard Levers are now energized!',
-            'puzzle_solved',
-          );
+          this.emitEvent('puzzle_solved', 'The grandfather clock chimes.', 'puzzle_solved');
         } else {
           this.emitEvent('sfx', '', 'dial_click');
         }
@@ -522,7 +500,7 @@ export class GameRoom {
           this.hooks.sendTo(playerId, {
             type: 'world_event',
             event: 'error',
-            message: 'The lever has no power yet — set the Foyer Grandfather Clock first!',
+            message: 'The lever has no power yet.',
             sfx: 'error',
           });
           return;
@@ -544,15 +522,11 @@ export class GameRoom {
         if (otherAt > 0 && now - otherAt <= SYNC_WINDOW_MS && otherBy !== player.slot) {
           solved.p1_twin_levers = true;
           this.state.doors.courtyard_door = true;
-          this.emitEvent(
-            'puzzle_solved',
-            '☀️ Twin Levers synchronized! The Grand Courtyard Doors swing open — and the Brass Study Key dropped onto the Foyer pedestal!',
-            'door_open',
-          );
+          this.emitEvent('puzzle_solved', 'The courtyard doors unseal.', 'door_open');
         } else {
           this.emitEvent(
             'coop_prompt',
-            `⚡ ${player.name} pulled the ${isLeft ? 'LEFT' : 'RIGHT'} Entry Lever! Pull the ${isLeft ? 'RIGHT' : 'LEFT'} Lever within 2.5s!`,
+            `${player.name} pulled the ${isLeft ? 'left' : 'right'} lever — waiting for the other…`,
             'lever_pull',
           );
         }
@@ -569,11 +543,7 @@ export class GameRoom {
         if (pz.teaCipherDials.every((sym, i) => sym === SOLUTIONS.p2_cipher[i])) {
           solved.p2_tea_cipher = true;
           this.state.doors.tea_north_grille = true; // permanently latched open!
-          this.emitEvent(
-            'puzzle_solved',
-            '✨ Botanical Cipher solved! North Booth grille locked open & the Aether UV Lantern is now available in the Supply Cabinet!',
-            'puzzle_solved',
-          );
+          this.emitEvent('puzzle_solved', 'The cipher clicks into place.', 'puzzle_solved');
         } else {
           this.emitEvent('sfx', '', 'dial_click');
         }
@@ -604,7 +574,7 @@ export class GameRoom {
           this.handleDiscoverClue('clue_core_sun_cardinal');
           this.emitEvent(
             'puzzle_solved',
-            '⚖️ Tea Scale balanced! Secret drawer popped open — Solstice Plaque I (Sun Core: EAST) added to your Notebook!',
+            'The scale balances — a hidden latch clicks open.',
             'puzzle_solved',
           );
         } else {
@@ -627,11 +597,7 @@ export class GameRoom {
         ];
         if (pz.studySafeDigits.every((d, i) => d === SOLUTIONS.p4_safe[i])) {
           solved.p4_uv_safe = true;
-          this.emitEvent(
-            'puzzle_solved',
-            '🔓 Study Wall Safe unlocked! Claim the Conservatory Glass Key & Pocket Brass Prism from the safe!',
-            'puzzle_solved',
-          );
+          this.emitEvent('puzzle_solved', 'The study safe unlocks.', 'puzzle_solved');
         } else {
           this.emitEvent('sfx', '', 'dial_click');
         }
@@ -650,7 +616,7 @@ export class GameRoom {
           this.handleDiscoverClue('clue_core_gear_cardinal');
           this.emitEvent(
             'puzzle_solved',
-            '🎵 Pure harmony! The Organ Compartment opens — 18-Tooth Brass Gear & Solstice Plaque II (Gear Core: SOUTH) revealed!',
+            'A warm chord resonates — a hidden compartment opens.',
             'puzzle_solved',
           );
         }
@@ -675,11 +641,7 @@ export class GameRoom {
         ) {
           solved.p6_sundial = true;
           this.state.doors.workshop_door = true;
-          this.emitEvent(
-            'puzzle_solved',
-            '☀️ Equinox Sundial aligned (6 • 4 • 10)! The East Clockwork Workshop Doors unseal!',
-            'door_open',
-          );
+          this.emitEvent('puzzle_solved', 'The sundial locks into alignment.', 'door_open');
         } else {
           this.emitEvent('sfx', '', 'dial_click');
         }
@@ -690,25 +652,21 @@ export class GameRoom {
       // --- P7: Courtyard Solar Beam Mirror Relay (2P Coop!) ---
       case 'insert_prism': {
         if (pz.prismInserted) {
-          this.emitEvent('info', 'The Sun-Emitter is already focusing golden light across the courtyard!', 'mirror_rotate');
+          this.emitEvent('sfx', '', 'mirror_rotate');
           return;
         }
         if (!this.state.inventory.includes('tool_prism')) {
           this.hooks.sendTo(playerId, {
             type: 'world_event',
             event: 'error',
-            message: 'The Sun-Emitter socket is empty — find the Pocket Brass Prism in the Study Safe!',
+            message: 'An empty optical socket — something is missing.',
             sfx: 'error',
           });
           return;
         }
         // Reusable tool: DO NOT consume tool_prism!
         pz.prismInserted = true;
-        this.emitEvent(
-          'info',
-          '💎 Solar Emitter aligned with your Brass Prism! Now rotate Mirrors 1, 2 & 3 into the Conservatory Roof Receptor!',
-          'mirror_rotate',
-        );
+        this.emitEvent('info', 'The sun-emitter ignites.', 'mirror_rotate');
         this.checkLightRelaySolved();
         this.syncAll();
         return;
@@ -723,17 +681,13 @@ export class GameRoom {
           this.hooks.sendTo(playerId, {
             type: 'world_event',
             event: 'error',
-            message: 'Mirror 2 is spring-loaded! Have your partner stand on the Courtyard Sun-Pad to lock its clutch while you rotate it!',
+            message: 'The mirror springs back — something needs to hold its clutch.',
             sfx: 'error',
           });
           return;
         }
         pz.mirrorAngles[idx] = (pz.mirrorAngles[idx] + 1) % 8;
-        this.emitEvent(
-          'sfx',
-          `Mirror ${idx + 1} rotated to notch ${pz.mirrorAngles[idx]}`,
-          'mirror_rotate',
-        );
+        this.emitEvent('sfx', '', 'mirror_rotate');
         this.checkLightRelaySolved();
         this.syncAll();
         return;
@@ -760,19 +714,13 @@ export class GameRoom {
         const matchB = gaugesAtB.every((v, i) => v === SOLUTIONS.p8_targetsH[i]);
         if (matchA && matchB) {
           solved.p8_irrigation = true;
-          if (solved.p7_light_relay) {
-            this.emitEvent(
-              'puzzle_solved',
-              '🌺 All 6 irrigation gauges balanced & sunlight streaming! The Glass Lotus blooms — claim the Sun Resonance Core!',
-              'puzzle_solved',
-            );
-          } else {
-            this.emitEvent(
-              'puzzle_solved',
-              '💧 Irrigation network balanced! Now route the Courtyard Solar Beam into the Conservatory roof to bloom the Glass Lotus!',
-              'puzzle_solved',
-            );
-          }
+          this.emitEvent(
+            'puzzle_solved',
+            solved.p7_light_relay
+              ? 'The Glass Lotus blooms.'
+              : 'Water pressure stabilizes across the glasshouse.',
+            'puzzle_solved',
+          );
         } else {
           this.emitEvent('sfx', '', 'valve_turn');
         }
@@ -790,7 +738,7 @@ export class GameRoom {
           this.hooks.sendTo(playerId, {
             type: 'world_event',
             event: 'error',
-            message: 'You do not have the 18-Tooth Brass Gear yet! Check the Alchemist\'s Study.',
+            message: 'Missing the 18-tooth gear.',
             sfx: 'error',
           });
           return;
@@ -801,11 +749,7 @@ export class GameRoom {
           // Consume item_gear_18t from inventory since it's mounted in the machine!
           const gIdx = this.state.inventory.indexOf('item_gear_18t');
           if (gIdx !== -1) this.state.inventory.splice(gIdx, 1);
-          this.emitEvent(
-            'puzzle_solved',
-            '⚙️ Gear Train spinning at 30 / 40 / 20 RPM! The Foundry Forge lights up & the Sky-Lift Brass Key is released!',
-            'puzzle_solved',
-          );
+          this.emitEvent('puzzle_solved', 'The gear train hums to life.', 'puzzle_solved');
         } else {
           this.emitEvent('sfx', '', 'gear_place');
         }
@@ -820,7 +764,7 @@ export class GameRoom {
           this.hooks.sendTo(playerId, {
             type: 'world_event',
             event: 'error',
-            message: 'The Foundry Bellows are cold — assemble and start the Workshop Gear-Train first!',
+            message: 'The bellows have no drive power yet.',
             sfx: 'error',
           });
           return;
@@ -847,22 +791,14 @@ export class GameRoom {
 
           if (pz.foundryStage >= 3) {
             solved.p10_foundry_sync = true;
-            this.emitEvent(
-              'puzzle_solved',
-              '🔥 Strike 3/3! The Gear Resonance Core is forged and glowing on the central anvil!',
-              'puzzle_solved',
-            );
+            this.emitEvent('puzzle_solved', 'The forge cools — something gleams on the anvil.', 'puzzle_solved');
           } else {
-            this.emitEvent(
-              'coop_prompt',
-              `🔨 Synchronized Forge Strike ${pz.foundryStage}/3! Pull both levers together again!`,
-              'puzzle_solved',
-            );
+            this.emitEvent('coop_prompt', `Forge strike ${pz.foundryStage}/3.`, 'puzzle_solved');
           }
         } else {
           this.emitEvent(
             'coop_prompt',
-            `🔥 ${player.name} pulled the ${isNorth ? 'NORTH-EAST' : 'SOUTH-EAST'} Foundry Lever! Pull the opposite lever within 2.5s! (${pz.foundryStage}/3)`,
+            `${player.name} pulled a foundry lever — waiting for the other… (${pz.foundryStage}/3)`,
             'lever_pull',
           );
         }
@@ -891,11 +827,7 @@ export class GameRoom {
         ) {
           solved.p11_orrery = true;
           this.handleDiscoverClue('clue_core_star_cardinal');
-          this.emitEvent(
-            'puzzle_solved',
-            '✨ Celestial alignment achieved! Claim the Star Resonance Core — Solstice Plaque III (Star Core: NORTH) logged!',
-            'puzzle_solved',
-          );
+          this.emitEvent('puzzle_solved', 'The planetary rings lock into alignment.', 'puzzle_solved');
         } else {
           this.emitEvent('sfx', '', 'dial_click');
         }
@@ -921,31 +853,15 @@ export class GameRoom {
           if (pz.windHarpStep >= 4) {
             solved.p12_wind_harp = true;
             this.handleDiscoverClue('clue_core_wind_cardinal');
-            this.emitEvent(
-              'puzzle_solved',
-              '🎶 All 4 Wind-Harp harmonies complete! Claim the Wind Resonance Core at the Sky-Garden Spire — Solstice Plaque IV (Wind Core: WEST) logged!',
-              'puzzle_solved',
-            );
+            this.emitEvent('puzzle_solved', 'All four harmonies resonate across the terrace.', 'puzzle_solved');
           } else {
-            this.emitEvent(
-              'coop_prompt',
-              `🎶 Harmonic Chord ${pz.windHarpStep}/4 resonated (${color.toUpperCase()})! Continue the Under-Arch sequence!`,
-              `harp_${color}`,
-            );
+            this.emitEvent('coop_prompt', `Harmony ${pz.windHarpStep}/4.`, `harp_${color}`);
           }
         } else if (color === expected && !partnerOnStone) {
-          this.emitEvent(
-            'coop_prompt',
-            `Wind-Harp ${color.toUpperCase()} chimes, but your partner must stand on the glowing ${color.toUpperCase()} Terrace Stone below at the same time!`,
-            `harp_${color}`,
-          );
+          this.emitEvent('sfx', '', `harp_${color}`);
         } else {
           pz.windHarpStep = 0;
-          this.emitEvent(
-            'error',
-            `Discordant note (${color.toUpperCase()})! Sequence reset to Step 1 — have your partner read the Under-Arch Relief from below!`,
-            'error',
-          );
+          this.emitEvent('error', 'The note falls flat.', 'error');
         }
         this.syncAll();
         return;
@@ -1007,19 +923,13 @@ export class GameRoom {
     if (aligned) {
       pz.mirror2Latched = true;
       this.state.solvedPuzzles.p7_light_relay = true;
-      if (this.state.solvedPuzzles.p8_irrigation) {
-        this.emitEvent(
-          'puzzle_solved',
-          '☀️ Solar Beam locked into the Conservatory! The Glass Lotus blooms — claim the Sun Resonance Core!',
-          'puzzle_solved',
-        );
-      } else {
-        this.emitEvent(
-          'puzzle_solved',
-          '☀️ Solar Beam locked! Mirror 2 permanently latched — now balance the Conservatory Irrigation Valves to bloom the Glass Lotus!',
-          'puzzle_solved',
-        );
-      }
+      this.emitEvent(
+        'puzzle_solved',
+        this.state.solvedPuzzles.p8_irrigation
+          ? 'The Glass Lotus blooms.'
+          : 'The solar beam locks into place.',
+        'puzzle_solved',
+      );
     }
   }
 
@@ -1051,17 +961,9 @@ export class GameRoom {
       this.state.solvedPuzzles.p13_solstice_gate = true;
       this.state.doors.solstice_gate = true;
       this.state.completedAt = Date.now();
-      this.emitEvent(
-        'victory',
-        '☀️ THE GRAND SOLSTICE GATE OPENS! Congratulations, Master Horologists!',
-        'victory',
-      );
+      this.emitEvent('victory', 'The Grand Solstice Gate opens.', 'victory');
     } else if (leftSlot || rightSlot) {
-      this.emitEvent(
-        'coop_prompt',
-        '✨ All 4 Resonance Cores aligned! Stand on BOTH Twin Solstice Pads simultaneously to open the Grand Gate!',
-        'plate_step',
-      );
+      this.emitEvent('sfx', '', 'plate_step');
     }
   }
 
@@ -1119,15 +1021,11 @@ export class GameRoom {
 
     if (mg.readyPlayers.includes(1) && mg.readyPlayers.includes(2)) {
       this.minigameRunner.startPlaying(this.state, now);
-      this.emitEvent(
-        'info',
-        '🔮 Clockwork Oracle Aether-Gear Challenge STARTED! Charge 12 Sparks together!',
-        'puzzle_solved',
-      );
+      this.emitEvent('sfx', '', 'puzzle_solved');
     } else {
       this.emitEvent(
         'coop_prompt',
-        `🔮 ${player.name} is ready for the Clockwork Oracle Hint Minigame! Press [H] to join!`,
+        `${player.name} is ready at the Clockwork Oracle (press H to join).`,
         'ping',
       );
     }

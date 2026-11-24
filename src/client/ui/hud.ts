@@ -107,15 +107,79 @@ export interface HudController {
 }
 
 const CATEGORY_PILL: Record<ItemCategory, { label: string; className: string }> = {
-  key: { label: '1-USE KEY', className: 'pill-key' },
-  tool: { label: 'REUSABLE TOOL', className: 'pill-tool' },
-  part: { label: '1-USE PART', className: 'pill-part' },
-  core: { label: 'CORE', className: 'pill-core' },
+  key: { label: 'Single-use', className: 'pill-key' },
+  tool: { label: 'Tool', className: 'pill-tool' },
+  part: { label: 'Part', className: 'pill-part' },
+  core: { label: 'Core', className: 'pill-core' },
 };
 
 const CORE_NAMES = ['sun', 'gear', 'star', 'wind'] as const;
-const MIN_SLOTS = 6;
-const MAX_TOASTS = 4;
+const MAX_TOASTS = 3;
+
+function itemIconSvg(id: ItemId): SVGElement {
+  const s = svg('svg', {
+    viewBox: '0 0 24 24',
+    width: 20,
+    height: 20,
+    fill: 'none',
+    stroke: 'currentColor',
+    'stroke-width': 1.6,
+    'stroke-linecap': 'round',
+    'stroke-linejoin': 'round',
+    'aria-hidden': 'true',
+  });
+  if (id.startsWith('key_')) {
+    s.append(
+      svg('circle', { cx: 8, cy: 12, r: 4 }),
+      svg('path', { d: 'M12 12h9M17 12v3M20 12v2' }),
+    );
+  } else if (id === 'tool_uv_lamp') {
+    s.append(
+      svg('path', { d: 'M9 3h6l1 4v10a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2V7z' }),
+      svg('path', { d: 'M8 7h8M12 11v4' }),
+    );
+  } else if (id === 'tool_prism') {
+    s.append(svg('polygon', { points: '12 3 21 19 3 19' }));
+  } else if (id === 'item_gear_18t' || id === 'core_gear') {
+    s.append(
+      svg('circle', { cx: 12, cy: 12, r: 3.5 }),
+      svg('circle', { cx: 12, cy: 12, r: 7.5, 'stroke-dasharray': '3 2.5' }),
+    );
+  } else if (id === 'core_sun') {
+    s.append(
+      svg('circle', { cx: 12, cy: 12, r: 4 }),
+      svg('path', { d: 'M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1' }),
+    );
+  } else if (id === 'core_star') {
+    s.append(svg('path', { d: 'M12 3l2.4 6.2L21 12l-6.6 2.8L12 21l-2.4-6.2L3 12l6.6-2.8z' }));
+  } else {
+    s.append(
+      svg('path', { d: 'M3 9h11a3 3 0 1 0-3-3M3 14h14a3 3 0 1 1-3 3M3 19h8' }),
+    );
+  }
+  return s;
+}
+
+function speakerSvg(muted: boolean): SVGElement {
+  const s = svg('svg', {
+    viewBox: '0 0 20 20',
+    width: 15,
+    height: 15,
+    fill: 'none',
+    stroke: 'currentColor',
+    'stroke-width': 1.6,
+    'stroke-linecap': 'round',
+    'stroke-linejoin': 'round',
+    'aria-hidden': 'true',
+  });
+  s.append(svg('path', { d: 'M3 8h3.2L10.5 4.5v11L6.2 12H3z' }));
+  if (muted) {
+    s.append(svg('path', { d: 'M13.5 7.5l4 5M17.5 7.5l-4 5' }));
+  } else {
+    s.append(svg('path', { d: 'M13.5 7.2a4 4 0 0 1 0 5.6M16 4.8a7.4 7.4 0 0 1 0 10.4' }));
+  }
+  return s;
+}
 
 export function createHud(callbacks: {
   onSelectItem: (item: ItemId | null) => void;
@@ -168,7 +232,7 @@ export function createHud(callbacks: {
   bindButton('hint-hud-btn', () => callbacks.onOpenOracle());
   function toggleMute(): void {
     const muted = callbacks.onToggleMute();
-    muteBtn.textContent = muted ? '🔇' : '🔊';
+    muteBtn.replaceChildren(speakerSvg(muted));
     muteBtn.classList.toggle('is-muted', muted);
   }
   bindButton('audio-mute-btn', toggleMute);
@@ -205,6 +269,14 @@ export function createHud(callbacks: {
     if (key === lastInventoryKey) return;
     lastInventoryKey = key;
 
+    if (state.inventory.length === 0) {
+      inventoryBar.replaceChildren();
+      inventoryBar.classList.add('is-empty');
+      knownItems = new Set();
+      return;
+    }
+    inventoryBar.classList.remove('is-empty');
+
     const slots: HTMLElement[] = state.inventory.map((id, i) => {
       const def = ITEMS[id];
       const pill = CATEGORY_PILL[def.category];
@@ -218,7 +290,7 @@ export function createHud(callbacks: {
           'aria-label': `${def.name}, ${pill.label}`,
         },
         i < 9 && el('kbd', { class: 'inv-num' }, i + 1),
-        el('span', { class: 'inv-icon' }, def.icon),
+        el('span', { class: 'inv-icon' }, itemIconSvg(id)),
         el('span', { class: 'inv-name' }, def.shortName),
         el('span', { class: `cat-pill ${pill.className}` }, pill.label),
       );
@@ -229,32 +301,29 @@ export function createHud(callbacks: {
       });
       return btn;
     });
-    for (let i = slots.length; i < MIN_SLOTS; i++) {
-      slots.push(el('div', { class: 'inv-slot empty' }, el('kbd', { class: 'inv-num' }, i + 1)));
-    }
 
     const def = selected && state.inventory.includes(selected) ? ITEMS[selected] : null;
-    const caption = el(
-      'div',
-      { class: `inv-caption${def ? '' : ' invisible'}` },
-      el('strong', {}, def ? def.name : '—'),
-      el(
-        'span',
-        {},
-        def
-          ? def.category === 'key'
-            ? ' Used up when it opens its lock'
-            : def.id === 'tool_uv_lamp'
-              ? ' Press F to toggle · never used up'
-              : def.category === 'tool'
-                ? ' Never used up'
-                : def.category === 'core'
-                  ? ' Place it at the Solstice Gate'
-                  : ' Fits a mechanism'
-          : '',
-      ),
-    );
-    inventoryBar.replaceChildren(caption, el('div', { class: 'inv-slots' }, ...slots));
+    const caption = def
+      ? el(
+          'div',
+          { class: 'inv-caption' },
+          el('strong', {}, def.name),
+          el(
+            'span',
+            {},
+            def.category === 'key'
+              ? ' · Consumed on unlock'
+              : def.id === 'tool_uv_lamp'
+                ? ' · Press F to toggle'
+                : def.category === 'tool'
+                  ? ' · Reusable'
+                  : def.category === 'core'
+                    ? ' · Solstice Gate'
+                    : '',
+          ),
+        )
+      : null;
+    inventoryBar.replaceChildren(...(caption ? [caption] : []), el('div', { class: 'inv-slots' }, ...slots));
     knownItems = new Set(state.inventory);
   }
 
@@ -307,14 +376,14 @@ export function createHud(callbacks: {
     hintBtn.classList.toggle('ready', ready);
     hintBtn.classList.toggle('cooling', !ready);
     const waiting = latest.minigame.phase === 'lobby' ? latest.minigame.readyPlayers.length : 0;
-    setText(
-      hintBadge,
-      ready
-        ? waiting > 0
-          ? `${waiting}/2 READY`
-          : 'READY'
-        : formatDuration(latest.hintCooldownEndsAt - now, true),
-    );
+      setText(
+        hintBadge,
+        ready
+          ? waiting > 0
+            ? `${waiting}/2`
+            : 'Ready'
+          : formatDuration(latest.hintCooldownEndsAt - now, true),
+      );
     refreshLockBanner();
   }
   window.setInterval(tickClocks, 250);
@@ -355,16 +424,17 @@ export function createHud(callbacks: {
 
     showToast(message, variant = 'info') {
       if (!message) return;
-      const icon = { info: '✦', success: '☀', warning: '⚠', key: '🗝️' }[variant];
+      // Strip leading decorative emoji if any server message includes one
+      const clean = message.replace(/^[\p{Extended_Pictographic}\uFE0F\u200D\u2600-\u27BF]+\s*/u, '');
       const toast = el(
         'div',
         { class: `toast toast-${variant}`, role: 'status' },
-        el('span', { class: 'toast-icon' }, icon),
-        el('span', { class: 'toast-text' }, message),
+        el('span', { class: 'toast-dot', 'aria-hidden': 'true' }),
+        el('span', { class: 'toast-text' }, clean),
       );
       toastContainer.append(toast);
       while (toastContainer.childElementCount > MAX_TOASTS) toastContainer.firstElementChild?.remove();
-      const life = Math.min(9000, 3400 + message.length * 32);
+      const life = Math.min(7000, 3200 + clean.length * 28);
       window.setTimeout(() => {
         toast.classList.add('leaving');
         window.setTimeout(() => toast.remove(), 350);

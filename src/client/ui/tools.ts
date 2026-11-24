@@ -109,6 +109,8 @@ export function createTools(callbacks: {
     if (key === cluesKey) return;
     cluesKey = key;
     const all = [...state.discoveredClues].sort((a, b) => b.discoveredAt - a.discoveredAt);
+    const showSearch = all.length > 2 || search.length > 0;
+    searchInput.classList.toggle('hidden', !showSearch);
     const shown = search
       ? all.filter((c) => `${c.title} ${c.zone} ${c.body}`.toLowerCase().includes(search))
       : all;
@@ -116,16 +118,16 @@ export function createTools(callbacks: {
       all.length === 0
         ? ''
         : search
-          ? `${shown.length} of ${all.length} clues match`
-          : `${all.length} clue${all.length === 1 ? '' : 's'} recorded, newest first`;
+          ? `${shown.length} of ${all.length} matching`
+          : `${all.length} ${all.length === 1 ? 'entry' : 'entries'}`;
     if (shown.length === 0) {
       clueList.replaceChildren(
         el(
           'p',
           { class: 'notebook-empty' },
           all.length === 0
-            ? 'Nothing recorded yet. Read the ledger, plaques and letters around the estate — each one is copied here for both of you.'
-            : 'No clue matches that search.',
+            ? 'Clues you inspect around the estate are recorded here automatically.'
+            : 'No matching clues.',
         ),
       );
       return;
@@ -159,7 +161,7 @@ export function createTools(callbacks: {
         el(
           'p',
           { class: 'notebook-empty' },
-          'No Oracle scrolls yet. Press H to challenge the Clockwork Oracle together and win one.',
+          'No hints yet. Press H to consult the Clockwork Oracle together.',
         ),
       );
       return;
@@ -191,7 +193,7 @@ export function createTools(callbacks: {
             el(
               'div',
               { class: 'hint-entry' },
-              el('span', { class: `tier-badge tier-${h.tier}` }, `Tier ${h.tier}`),
+              el('span', { class: `tier-badge tier-${h.tier}` }, h.tier === 1 ? 'Nudge' : h.tier === 2 ? 'Clue' : 'Answer'),
               el('p', {}, h.text),
             ),
           ),
@@ -207,15 +209,15 @@ export function createTools(callbacks: {
     class: 'notes-area',
     spellcheck: 'false',
     maxlength: NOTES_MAX,
-    placeholder: 'Jot sums, symbols and theories here. Your partner sees this page live.',
+    placeholder: 'Write notes, numbers, or theories here — synced live with your partner.',
     'aria-label': 'Shared scratchpad',
   });
-  const notesStatus = el('span', { class: 'notes-status' }, 'In sync with your partner');
+  const notesStatus = el('span', { class: 'notes-status' }, 'Synced');
   const notesPane = el(
     'div',
     { class: 'notebook-pane notes-pane' },
     notesArea,
-    el('div', { class: 'notes-foot' }, notesStatus),
+    el('div', { class: 'notes-foot' }, el('span', { class: 'notes-sync-dot', 'aria-hidden': 'true' }), notesStatus),
   );
 
   let notesBase = ''; // last text known to be on the server
@@ -239,7 +241,7 @@ export function createTools(callbacks: {
       inFlightAt = Date.now();
       callbacks.onUpdateSharedNotes(text);
     }
-    notesStatus.textContent = 'In sync with your partner';
+    notesStatus.textContent = 'Synced';
   }
 
   function setNotesText(next: string): void {
@@ -385,33 +387,32 @@ export function createTools(callbacks: {
   }
 
   function renderCalc(): void {
-    exprLine.textContent = expression || ' ';
-    mainLine.textContent = jammed ? 'JAMMED — press C' : entry;
+    exprLine.textContent = expression || '\u00a0';
+    mainLine.textContent = jammed ? 'Error' : entry;
     mainLine.classList.toggle('jammed', jammed);
     for (const [op, btn] of opButtons) btn.classList.toggle('armed', op === pendingOp && entryIsFresh);
+    tapeBox.classList.toggle('hidden', tape.length === 0);
     tapeBox.replaceChildren(
-      ...(tape.length === 0
-        ? [el('div', { class: 'tape-empty' }, 'Paper tape: your last five sums print here')]
-        : tape.map((t) =>
-            el(
-              'button',
-              {
-                class: 'tape-row',
-                title: 'Use this result',
-                onClick: () => {
-                  if (jammed) clearAll();
-                  callbacks.onClickSound();
-                  entry = t.result;
-                  entryIsFresh = true;
-                  if (pendingOp === null) expression = '';
-                  else entryIsFresh = false;
-                  renderCalc();
-                },
-              },
-              el('span', {}, `${t.expr} =`),
-              el('b', {}, t.result),
-            ),
-          )),
+      ...tape.map((t) =>
+        el(
+          'button',
+          {
+            class: 'tape-row',
+            title: 'Use this result',
+            onClick: () => {
+              if (jammed) clearAll();
+              callbacks.onClickSound();
+              entry = t.result;
+              entryIsFresh = true;
+              if (pendingOp === null) expression = '';
+              else entryIsFresh = false;
+              renderCalc();
+            },
+          },
+          el('span', {}, `${t.expr} =`),
+          el('b', {}, t.result),
+        ),
+      ),
     );
   }
 
@@ -539,7 +540,6 @@ export function createTools(callbacks: {
     tapeBox,
     el('div', { class: 'calc-display' }, exprLine, mainLine),
     keypad,
-    el('div', { class: 'calc-note' }, 'Runs left to right · Del clears'),
   );
   renderCalc();
 

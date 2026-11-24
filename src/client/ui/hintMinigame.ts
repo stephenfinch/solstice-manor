@@ -179,7 +179,6 @@ export function createHintMinigame(callbacks: Callbacks): HintMinigameController
     return el(
       'div',
       { class: 'oracle-header' },
-      el('div', { class: 'oracle-eyebrow' }, 'The Clockwork Oracle'),
       el('h2', {}, title),
       closable &&
         el('button', { class: 'modal-close', title: 'Close (Esc)', 'aria-label': 'Close', onClick: close }, '✕'),
@@ -220,36 +219,34 @@ export function createHintMinigame(callbacks: Callbacks): HintMinigameController
       el(
         'div',
         { class: `role-card p${s}${s === slot ? ' mine' : ''}` },
-        el('div', { class: 'role-title' }, title, s === slot && el('span', { class: 'you-tag' }, 'YOU')),
+        el('div', { class: 'role-title' }, s === slot ? `${title} (You)` : title),
         el('p', {}, text),
       );
 
     const root = el(
       'div',
       { class: 'oracle-card lobby' },
-      header('Aether-Gear Challenge', true),
+      header('The Clockwork Oracle', true),
       el(
         'p',
         { class: 'oracle-blurb' },
-        'Beat the 35-second 2-Player Aether-Gear Challenge together to earn a Fate Draw! 2 out of 3 Mystery Caskets contain a contextual Clue Scroll (10-minute cooldown between plays — unlocked right away!).',
+        'Complete the 35-second co-op challenge together for a 2-in-3 chance at a clue. 10-minute cooldown.',
       ),
       el(
         'div',
         { class: 'role-row' },
-        role(1, 'Player 1 · Inner Brass Catcher', 'Catch Gold Sparks ★. Press Space for a Steam Vent that widens your arc for a moment.'),
-        role(2, 'Player 2 · Outer Crystal Deflector', 'Catch Silver Sparks ◆. Press Space for a Magnet Pulse that widens your arc for a moment.'),
+        role(1, 'Inner Ring', 'Catch gold sparks. Space widens arc.'),
+        role(2, 'Outer Ring', 'Catch blue sparks. Space widens arc.'),
       ),
       el(
-        'ul',
-        { class: 'oracle-rules' },
-        el('li', {}, el('b', {}, 'Steer'), ' with A / D, ← / →, or drag around the astrolabe.'),
-        el('li', {}, el('b', {}, 'Either of you'), ' can block red Jam-Cogs before they hit the core.'),
-        el('li', {}, el('b', {}, 'Sync Beam:'), ' when a golden beam appears, point both arcs at it for +3 charge.'),
+        'p',
+        { class: 'oracle-controls-note' },
+        'A / D or drag to steer · Block red cogs · Align both arcs on golden beams',
       ),
       el(
         'label',
         { class: 'oracle-field', for: 'oracle-target' },
-        el('span', {}, 'Ask for a clue about'),
+        el('span', {}, 'Clue topic'),
         select,
       ),
       el('div', { class: 'ready-row' }, ...chips.map((c) => c.root)),

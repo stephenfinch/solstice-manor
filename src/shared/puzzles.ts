@@ -142,8 +142,8 @@ export const SOLUTIONS = {
   // P3: Tea Balance Apothecary (Amber+Jade=15, Amber=Jade+3 => 9,6; Rose=2*Mint, Total=33 => 12,6)
   p3_tea: { amber: 9, jade: 6, rose: 12, mint: 6 },
 
-  // P4: UV Invisible Ink Frames (Tiny->Large: 7, 3, 6, 4)
-  p4_safe: [7, 3, 6, 4] as [number, number, number, number],
+  // P4: UV Invisible Ink Frames (Tiny->Large: Acrostic=7, Hidden word=3, Ladder rungs=8, Alchemy flasks=5)
+  p4_safe: [7, 3, 8, 5] as [number, number, number, number],
 
   // P5: Harmonic Pipe Organ (no adjacent consecutive, slot3=1, slot5=3, slot4>slot2, slot1 even) => [2,4,1,5,3]
   p5_organ: [2, 4, 1, 5, 3] as [number, number, number, number, number],
@@ -226,10 +226,20 @@ export function isPipeOrganValid(pipes: [number, number, number, number, number]
 export function computeGearSpeeds(
   slots: [string | null, string | null, string | null],
 ): [number | null, number | null, number | null] {
+  // Power flows serially from the 60 RPM 12T motor through Shaft 1 -> Shaft 2 -> Shaft 3.
+  // A mounted gear after an empty shaft is not touching any driven gear, so it stands still (0 RPM).
+  let driven = true;
   return slots.map((teeth) => {
-    if (!teeth) return null;
+    if (!teeth) {
+      driven = false;
+      return null;
+    }
+    if (!driven) return 0;
     const n = Number(teeth);
-    if (!n) return null;
+    if (!n) {
+      driven = false;
+      return 0;
+    }
     return Math.round((720 / n) * 10) / 10;
   }) as [number | null, number | null, number | null];
 }
@@ -309,28 +319,28 @@ CALL THESE FOUR DIALS TO YOUR PARTNER THROUGH THE GLASS:
     title: 'UV Frame #1 (Tiny Frame)',
     zone: "Alchemist's Study",
     body: `REVEALED IN VIOLET AETHER INK (Size 1 — Smallest):
-"First Digit = Points on a 5-pointed star, plus 2."`,
+"First letters spell the digit: Soft Embers Vanish Every Night."`,
   },
   clue_uv_frame_1: {
     id: 'clue_uv_frame_1',
     title: 'UV Frame #2 (Small Frame)',
     zone: "Alchemist's Study",
     body: `REVEALED IN VIOLET AETHER INK (Size 2):
-"Second Digit = First Digit minus 4."`,
+"A number hides unbroken across two words: BENEATH REEDS, GOLD SLEEPS."`,
   },
   clue_uv_frame_2: {
     id: 'clue_uv_frame_2',
     title: 'UV Frame #3 (Medium Frame)',
     zone: "Alchemist's Study",
     body: `REVEALED IN VIOLET AETHER INK (Size 3):
-"Third Digit = Second Digit multiplied by 2."`,
+"Look to the rolling library ladder — count every wooden rung from floor to top."`,
   },
   clue_uv_frame_3: {
     id: 'clue_uv_frame_3',
     title: 'UV Frame #4 (Large Frame)',
     zone: "Alchemist's Study",
     body: `REVEALED IN VIOLET AETHER INK (Size 4 — Largest):
-"Fourth Digit = (First + Second + Third) minus 12."`,
+"Above the writing desk, count the glowing alchemical flasks lined along the walnut shelf."`,
   },
 
   clue_organ_rules: {
@@ -412,7 +422,7 @@ Once running, pull the North-East and South-East Foundry Levers simultaneously T
   2. Sun-Gold sits directly at Position 2.
   3. Mars-Copper is exactly 3 steps clockwise from Sun-Gold.
   4. Sea-Cobalt sits directly opposite Sun-Gold (4 steps around the 8-point ring).
-  5. The sum of all four planet positions equals 21.`,
+  5. Moon-Silver sits exactly 2 steps counter-clockwise from Sun-Gold.`,
   },
 
   clue_core_star_cardinal: {
@@ -500,8 +510,8 @@ export const PUZZLE_HINTS: PuzzleHintTrack[] = [
     order: 5,
     tiers: [
       'Unlock the West Study Door with the Brass Study Key. Equip the UV Lamp ([F]) from the Tea Parlor and shine it directly at the four blank picture frames on the Study walls.',
-      'Inspect all four UV frames and solve them from smallest frame to largest: Tiny = 5+2, Small = First-4, Medium = Second×2, Large = (First+Second+Third)-12.',
-      'Enter 7 - 3 - 6 - 4 into the Study Wall Safe to claim the Conservatory Glass Key and Pocket Brass Prism.',
+      'Order the four frames from smallest to largest: Tiny is an acrostic (first letters spell a number), Small hides a number spanning two words ("beneaTH REEds"), Medium counts the rolling ladder rungs, and Large counts the glowing flasks above the desk.',
+      'Enter 7 - 3 - 8 - 5 into the Study Wall Safe to claim the Conservatory Glass Key and Pocket Brass Prism.',
     ],
   },
   {
@@ -570,7 +580,7 @@ export const PUZZLE_HINTS: PuzzleHintTrack[] = [
     order: 12,
     tiers: [
       'Use the Sky-Lift Key (from the Workshop) on the North-East Courtyard Lift Gate, then head up to the Observatory Sky-Deck. Read the Orrery Ledger carefully.',
-      'Sun-Gold = 2. Three clockwise is Mars-Copper = 5. Opposite 2 on an 8-point ring is Sea-Cobalt = 6. Subtract their sum (13) from 21 to find Moon-Silver!',
+      'Start with Sun-Gold at 2. Step 3 clockwise for Mars-Copper (5), go directly across the 8-point ring for Sea-Cobalt (6), and step 2 counter-clockwise from 2 (2 → 1 → 8) for Moon-Silver!',
       'Set the Orrery planets to: Sun-Gold = 2, Mars-Copper = 5, Moon-Silver = 8, Sea-Cobalt = 6.',
     ],
   },

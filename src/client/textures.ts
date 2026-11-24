@@ -1128,15 +1128,14 @@ function uvCanvasPair(i: number, w: number, h: number): { blank: HTMLCanvasEleme
   g.fillText(['I  ·  TINY', 'II  ·  SMALL', 'III  ·  MEDIUM', 'IV  ·  LARGE'][i], w / 2, h * 0.19);
   g.shadowColor = '#37f6ff';
   g.fillStyle = '#b9fdff';
-  const fs = Math.round(w * 0.092);
+  const fs = Math.round(w * 0.072);
   g.font = `${fs}px ${SERIF}`;
-  const lines = wrapText(g, uvQuote(i), w * 0.8);
+  const lines = wrapText(g, uvQuote(i), w * 0.82);
   lines.forEach((line, k) => {
     const y = h * 0.56 + (k - (lines.length - 1) / 2) * fs * 1.28 + fs * 0.3;
     g.fillText(line, w / 2, y);
     g.fillText(line, w / 2, y);
   });
-  if (i === 0) drawSymbol(g, 'star', w / 2, h * 0.87, w * 0.045, '#e0b3ff');
   return { blank, uv };
 }
 

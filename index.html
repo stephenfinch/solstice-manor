@@ -13,36 +13,32 @@
       <!-- Lobby Overlay -->
       <div id="lobby-overlay" class="overlay-screen">
         <div class="lobby-card">
-          <div class="lobby-emblem">☀</div>
-          <h1 class="lobby-title">SOLSTICE MANOR</h1>
-          <p class="lobby-subtitle">A 2-Player Cooperative First-Person LAN Escape Room</p>
-          <p class="lobby-blurb">
-            Master Horologist Aurelius Vance has departed by skyship, leaving his sunlit hilltop estate sealed behind his Grand Solstice Exam. Work together across indoor studies, glass conservatories, workshops, and sunlit courtyards to recover the four Resonance Cores and open the Solstice Gate.
-          </p>
-
-          <div class="lan-banner" id="lan-banner">
-            <span class="lan-label">LAN Join URL:</span>
-            <code id="lan-url">Loading...</code>
-            <button id="copy-lan-btn" class="btn-small" title="Copy LAN URL">Copy</button>
+          <div class="lobby-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.4">
+              <circle cx="16" cy="16" r="5.5" />
+              <path d="M16 2.5v4.5M16 25v4.5M2.5 16H7M25 16h4.5M6.5 6.5l3.2 3.2M22.3 22.3l3.2 3.2M25.5 6.5l-3.2 3.2M9.7 22.3l-3.2 3.2" stroke-linecap="round" />
+            </svg>
           </div>
+          <h1 class="lobby-title">Solstice Manor</h1>
+          <p class="lobby-subtitle">Two-player cooperative escape room</p>
 
           <div class="lobby-form" id="lobby-join-form">
             <div class="field-row">
-              <label for="player-name">Your Apprentice Name</label>
+              <label for="player-name">Name</label>
               <input id="player-name" type="text" maxlength="18" placeholder="Apprentice" value="" />
             </div>
 
             <div class="lobby-actions">
-              <button id="create-room-btn" class="btn-primary">Create New Estate Session</button>
-              <div class="join-divider"><span>OR JOIN PARTNER</span></div>
+              <button id="create-room-btn" class="btn-primary">Create Session</button>
+              <div class="join-divider"><span>or join a session</span></div>
               <div class="join-row">
-                <input id="room-code-input" type="text" maxlength="6" placeholder="ROOM CODE" />
-                <button id="join-room-btn" class="btn-secondary">Join Room</button>
+                <input id="room-code-input" type="text" maxlength="6" placeholder="CODE" />
+                <button id="join-room-btn" class="btn-secondary">Join</button>
               </div>
             </div>
 
             <div id="active-rooms-box" class="active-rooms-box hidden">
-              <div class="active-rooms-title">Active Sessions on This LAN</div>
+              <div class="active-rooms-title">On this network</div>
               <div id="active-rooms-list"></div>
             </div>
             <div id="lobby-error" class="error-text hidden"></div>
@@ -50,28 +46,21 @@
 
           <div class="lobby-waiting hidden" id="lobby-waiting">
             <div class="room-code-display">
-              <span class="code-label">SHARE THIS ROOM CODE</span>
+              <span class="code-label">Room Code</span>
               <span class="code-value" id="waiting-room-code">----</span>
             </div>
             <div class="players-slots" id="players-slots"></div>
-            <p class="waiting-tip">
-              Open <strong id="waiting-lan-url"></strong> on your partner's browser on the same Wi-Fi/LAN and enter the code above!
-            </p>
+            <span id="waiting-lan-url" class="hidden"></span>
             <div class="waiting-buttons">
-              <button id="enter-manor-btn" class="btn-primary">Enter Solstice Manor</button>
+              <button id="enter-manor-btn" class="btn-primary">Enter Manor</button>
               <button id="leave-room-btn" class="btn-ghost">Leave</button>
             </div>
           </div>
 
-          <div class="controls-strip">
-            <span><b>WASD</b> Walk</span>
-            <span><b>Mouse</b> Look</span>
-            <span><b>E / Click</b> Interact</span>
-            <span><b>F</b> UV Lamp</span>
-            <span><b>Q</b> Coop Ping</span>
-            <span><b>N</b> Notebook</span>
-            <span><b>C</b> Calculator</span>
-            <span><b>H</b> Oracle Hint</span>
+          <div class="lan-banner" id="lan-banner">
+            <span class="lan-label">LAN</span>
+            <code id="lan-url">Loading…</code>
+            <button id="copy-lan-btn" class="btn-link" title="Copy LAN URL">Copy</button>
           </div>
         </div>
       </div>
@@ -80,20 +69,33 @@
       <div id="hud" class="hidden">
         <div id="zone-banner">
           <div id="zone-name">Grand Foyer</div>
-          <div id="zone-sub">Indoor • Clockmaker's Entry</div>
+          <div id="zone-sub">Clockmaker's Entry</div>
         </div>
 
         <div id="top-right-hud">
-          <div class="hud-pill" id="timer-pill" title="Elapsed Time">⏱ <span id="elapsed-time">00:00</span></div>
-          <div class="hud-pill" id="cores-pill" title="Resonance Cores Placed">✦ <span id="cores-count">0/4</span> Cores</div>
-          <div class="hud-pill" id="partner-pill" title="Partner Status">
+          <span class="hud-metric" id="timer-pill" title="Elapsed Time">
+            <span id="elapsed-time">00:00</span>
+          </span>
+          <span class="hud-sep" aria-hidden="true"></span>
+          <span class="hud-metric" id="cores-pill" title="Resonance Cores">
+            <span id="cores-count">0/4</span> Cores
+          </span>
+          <span class="hud-sep" aria-hidden="true"></span>
+          <span class="hud-metric" id="partner-pill" title="Partner Status">
             <span class="status-dot" id="partner-dot"></span>
-            <span id="partner-status">Waiting for Partner...</span>
-          </div>
-          <button class="hud-btn" id="hint-hud-btn" title="Open Clockwork Oracle Hint Minigame (H)">
-            🔮 Oracle <span id="hint-cooldown-badge">READY</span>
+            <span id="partner-status">Waiting for partner</span>
+          </span>
+          <span class="hud-sep" aria-hidden="true"></span>
+          <button class="hud-action" id="hint-hud-btn" title="Clockwork Oracle Hint Minigame (H)">
+            Oracle <span id="hint-cooldown-badge">Ready</span>
           </button>
-          <button class="hud-btn" id="audio-mute-btn" title="Toggle Audio (M)">🔊</button>
+          <span class="hud-sep" aria-hidden="true"></span>
+          <button class="hud-icon-btn" id="audio-mute-btn" title="Mute / Unmute (M)" aria-label="Toggle audio">
+            <svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 8h3.2L10.5 4.5v11L6.2 12H3z" />
+              <path d="M13.5 7.2a4 4 0 0 1 0 5.6M16 4.8a7.4 7.4 0 0 1 0 10.4" />
+            </svg>
+          </button>
         </div>
 
         <!-- Crosshair & Interaction Prompt -->
@@ -106,7 +108,7 @@
           <span id="interact-label">Inspect</span>
         </div>
 
-        <!-- Coop Alert Banner (e.g. "Partner pulled Left Lever — Pull Right Lever NOW!") -->
+        <!-- Coop Alert Banner -->
         <div id="coop-banner" class="hidden"></div>
 
         <!-- Toast Notifications -->
@@ -116,18 +118,39 @@
         <div id="bottom-bar">
           <div id="inventory-bar"></div>
           <div id="tool-shortcuts">
-            <button class="tool-btn" id="btn-notebook" title="Field Notebook (N)">📖 Notebook <kbd>N</kbd></button>
-            <button class="tool-btn" id="btn-calculator" title="Brass Calculator (C)">🧮 Calc <kbd>C</kbd></button>
-            <button class="tool-btn" id="btn-ping" title="Coop Beacon Ping (Q)">📍 Ping <kbd>Q</kbd></button>
+            <button class="tool-btn" id="btn-notebook" title="Field Notebook (N)">
+              <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4.5 3.5h9a2 2 0 0 1 2 2v11h-11a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1Z" />
+                <path d="M7.5 3.5v13" />
+              </svg>
+              <span>Notebook</span>
+              <kbd>N</kbd>
+            </button>
+            <button class="tool-btn" id="btn-calculator" title="Calculator (C)">
+              <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="4" y="2.5" width="12" height="15" rx="2" />
+                <path d="M7 6h6M7 10h1.5M11.5 10H13M7 13.5h1.5M11.5 13.5H13" />
+              </svg>
+              <span>Calc</span>
+              <kbd>C</kbd>
+            </button>
+            <button class="tool-btn" id="btn-ping" title="Co-op Ping (Q)">
+              <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="10" cy="10" r="3" />
+                <circle cx="10" cy="10" r="7" opacity="0.55" />
+              </svg>
+              <span>Ping</span>
+              <kbd>Q</kbd>
+            </button>
           </div>
         </div>
 
-        <!-- Click to Resume Pointer Lock Banner -->
+        <!-- Minimal Click-to-Resume Pill -->
         <div id="pointer-lock-banner" class="hidden">
           <div class="pl-card">
-            <div class="pl-title">Click anywhere to look around</div>
-            <div class="pl-sub">Press <b>ESC</b> anytime to pause or use HUD buttons • <b>N</b> Notebook • <b>C</b> Calculator • <b>H</b> Oracle Hint</div>
-            <div class="pl-room">Room Code: <strong id="hud-room-code">----</strong></div>
+            <span class="pl-title">Click to look around</span>
+            <span class="pl-dot" aria-hidden="true">·</span>
+            <span class="pl-room">Room <strong id="hud-room-code">----</strong></span>
           </div>
         </div>
       </div>
@@ -137,7 +160,7 @@
         <div id="modal-panel" class="brass-modal">
           <div class="modal-header">
             <h2 id="modal-title">Inspect</h2>
-            <button id="modal-close-btn" class="modal-close" title="Close (Esc)">✕</button>
+            <button id="modal-close-btn" class="modal-close" title="Close (Esc)" aria-label="Close">✕</button>
           </div>
           <div id="modal-body"></div>
         </div>
@@ -146,22 +169,22 @@
       <!-- Field Notebook Drawer -->
       <div id="notebook-drawer" class="side-drawer hidden">
         <div class="drawer-header">
-          <h3>📖 Apprentice's Field Notebook</h3>
-          <button id="notebook-close-btn" class="modal-close">✕</button>
+          <h3>Field Notebook</h3>
+          <button id="notebook-close-btn" class="modal-close" aria-label="Close">✕</button>
         </div>
         <div class="drawer-tabs">
-          <button class="tab-btn active" data-tab="clues">Discovered Clues</button>
-          <button class="tab-btn" data-tab="hints">Oracle Hints</button>
-          <button class="tab-btn" data-tab="notes">Shared Scratchpad</button>
+          <button class="tab-btn active" data-tab="clues">Clues</button>
+          <button class="tab-btn" data-tab="hints">Hints</button>
+          <button class="tab-btn" data-tab="notes">Notes</button>
         </div>
         <div id="notebook-content" class="drawer-body"></div>
       </div>
 
-      <!-- Brass Mechanical Calculator Floating Widget -->
+      <!-- Calculator Floating Widget -->
       <div id="calculator-widget" class="floating-widget hidden">
         <div class="widget-header">
-          <span>🧮 Brass Arithmometer</span>
-          <button id="calc-close-btn" class="modal-close">✕</button>
+          <span>Calculator</span>
+          <button id="calc-close-btn" class="modal-close" aria-label="Close">✕</button>
         </div>
         <div id="calc-body"></div>
       </div>

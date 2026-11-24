@@ -3,6 +3,7 @@ import {
   BoxCollider,
   computeFloorHeight,
   FLOOR_PLATES,
+  isLineOfSightBlocked,
   PLAYER_SPAWNS,
   WORLD_COLLIDERS,
 } from '../src/shared/worldLayout.js';
@@ -194,7 +195,42 @@ describe('Solstice Manor — 3D Walkability, Ramp Elevation & Anti-Softlock Audi
     expect(canReachNear(reached, -18.2, 0, 7.6, 1.5)).toBe(true);
     expect(canReachNear(reached, -14.0, 0, 15.0, 1.5)).toBe(true);
 
-    // Tea Parlor North Booth Mural
-    expect(canReachNear(reached, 16.4, 0, 7.5, 1.5)).toBe(true);
+    // Tea Parlor North Booth Mural (now on North face of gallery wall at Z=10.6)
+    expect(canReachNear(reached, 16.5, 0, 8.2, 1.5)).toBe(true);
+  });
+
+  it('blocks interactions and UV beams through solid walls, closed doors, glass partitions, and hedges', () => {
+    const dir = (ox: number, oy: number, oz: number, tx: number, ty: number, tz: number) => {
+      const dx = tx - ox;
+      const dy = ty - oy;
+      const dz = tz - oz;
+      const len = Math.hypot(dx, dy, dz);
+      return { dx: dx / len, dy: dy / len, dz: dz / len, len };
+    };
+
+    // 1. South Booth player CANNOT interact with North Booth mural through glass/gallery wall at Z=11
+    const r1 = dir(16.5, 1.68, 13.0, 16.55, 2.15, 10.6);
+    expect(isLineOfSightBlocked(16.5, 1.68, 13.0, r1.dx, r1.dy, r1.dz, r1.len, allClosed)).toBe(true);
+
+    // 2. North Booth player CAN interact cleanly with the North Booth mural from Z=7.8!
+    const r2 = dir(16.55, 1.68, 7.8, 16.55, 2.15, 10.6);
+    expect(isLineOfSightBlocked(16.55, 1.68, 7.8, r2.dx, r2.dy, r2.dz, r2.len, allClosed)).toBe(false);
+
+    // 3. Foyer player CANNOT reach through the West Study wall (X=-8) to interact with Study desk/UV frames
+    const r3 = dir(-6.5, 1.68, 8.0, -10.2, 1.2, 8.0);
+    expect(isLineOfSightBlocked(-6.5, 1.68, 8.0, r3.dx, r3.dy, r3.dz, r3.len, allClosed)).toBe(true);
+
+    // 4. Foyer player CAN still click the locked Study Door itself (ignoring its own doorId)
+    const r4 = dir(-6.0, 1.68, 12.0, -8.0, 1.68, 12.0);
+    expect(isLineOfSightBlocked(-6.0, 1.68, 12.0, r4.dx, r4.dy, r4.dz, r4.len, allClosed, [], 'study_door')).toBe(false);
+
+    // 5. Foyer player CANNOT reach through the locked Courtyard Door to hit courtyard objects
+    const r5 = dir(0, 1.68, 7.5, 0, 1.4, 4.0);
+    expect(isLineOfSightBlocked(0, 1.68, 7.5, r5.dx, r5.dy, r5.dz, r5.len, allClosed)).toBe(true);
+
+    // 6. Courtyard hedge blocks interaction through bush
+    const hedge: BoxCollider = { id: 'decor_hedge_w1', minX: -11.55, maxX: -10.75, minY: 0, maxY: 1.5, minZ: -1.2, maxZ: 4.0 };
+    const r6 = dir(-9.5, 1.0, 1.4, -12.0, 1.0, 1.4);
+    expect(isLineOfSightBlocked(-9.5, 1.0, 1.4, r6.dx, r6.dy, r6.dz, r6.len, allClosed, [hedge])).toBe(true);
   });
 });

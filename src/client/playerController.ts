@@ -1,9 +1,25 @@
 import * as THREE from 'three';
 import { FloorMaterial, ItemId, PlayerTransform, WorldState } from '../shared/types.js';
-import { computeFloorHeight, detectZone, WORLD_COLLIDERS, ZoneDefinition } from '../shared/worldLayout.js';
+import {
+  computeFloorHeight,
+  detectZone,
+  isLineOfSightBlocked,
+  WORLD_COLLIDERS,
+  ZoneDefinition,
+} from '../shared/worldLayout.js';
 import { BuiltWorld, DECOR_COLLIDERS, InteractableObject } from './worldBuilder.js';
+import { isTypingTarget } from './ui/hud.js';
 
 const ALL_COLLIDERS = [...WORLD_COLLIDERS, ...DECOR_COLLIDERS];
+// Solid hedges, planters, and structural partitions that also block interaction line-of-sight
+const LOS_DECOR_OCCLUDERS = DECOR_COLLIDERS.filter(
+  (b) =>
+    b.id.includes('hedge') ||
+    b.id.includes('planter') ||
+    b.id.includes('ramp_end') ||
+    b.id.includes('mural_wall') ||
+    b.id.includes('bookshelves'),
+);
 
 const PLAYER_RADIUS = 0.38;
 const EYE_HEIGHT = 1.68;
@@ -109,7 +125,7 @@ export class FirstPersonController {
     });
 
     window.addEventListener('keydown', (e) => {
-      if (!this.canMove()) return;
+      if (!this.canMove() || isTypingTarget(e.target)) return;
       this.keys.add(e.code);
     });
 
@@ -154,7 +170,9 @@ export class FirstPersonController {
     const clampedDt = Math.min(0.08, dt);
     let moving = false;
 
-    if (this.canMove() && this.isPointerLocked) {
+    if (!this.canMove() || isTypingTarget(document.activeElement)) {
+      this.keys.clear();
+    } else {
       let forward = 0;
       let strafe = 0;
       if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) forward += 1;
@@ -252,7 +270,20 @@ export class FirstPersonController {
         const dist = toFrame.length();
         if (dist <= 7.0) {
           toFrame.normalize();
-          if (camDir.dot(toFrame) > 0.72) {
+          if (
+            camDir.dot(toFrame) > 0.72 &&
+            !isLineOfSightBlocked(
+              camPos.x,
+              camPos.y,
+              camPos.z,
+              toFrame.x,
+              toFrame.y,
+              toFrame.z,
+              dist,
+              state.doors,
+              LOS_DECOR_OCCLUDERS,
+            )
+          ) {
             onUvFrameSpotted(frame.index);
           }
         }
@@ -284,6 +315,9 @@ export class FirstPersonController {
     const candidateRoots = world.interactables.map((i) => i.mesh);
     const hits = this.raycaster.intersectObjects(candidateRoots, true);
 
+    const rayOrigin = this.raycaster.ray.origin;
+    const rayDir = this.raycaster.ray.direction;
+
     for (const hit of hits) {
       let node: THREE.Object3D | null = hit.object;
       let found: InteractableObject | undefined;
@@ -296,6 +330,24 @@ export class FirstPersonController {
       if (!found.mesh.visible) continue;
       const maxD = found.maxDistance ?? 4.5;
       if (hit.distance > maxD) continue;
+
+      // Reject any object behind a solid wall, closed door, glass partition, or hedge!
+      if (
+        isLineOfSightBlocked(
+          rayOrigin.x,
+          rayOrigin.y,
+          rayOrigin.z,
+          rayDir.x,
+          rayDir.y,
+          rayDir.z,
+          hit.distance,
+          state.doors,
+          LOS_DECOR_OCCLUDERS,
+          found.actionType === 'door' ? found.doorId : undefined,
+        )
+      ) {
+        continue;
+      }
 
       const label = found.getLabel ? found.getLabel(state) : found.label;
       if (!label) continue;

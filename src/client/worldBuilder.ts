@@ -1787,6 +1787,36 @@ function buildFoyer(c: Ctx): void {
 
   // Armchairs facing the hearth
   for (const [x, ry] of [[-2.7, Math.PI - 0.9], [2.7, Math.PI + 0.9]] as const) armchair(k.at(x, 0, 16.6, ry), M, M.velvetTeal);
+  // Tucked-away commemorative brass plaque on the side of the Foyer fireplace
+  plaque(
+    c,
+    k,
+    makePlaqueTexture('SMALL BRASS PLAQUE', 'Gavin is the best\nand is my favorite\ncoworker.', { style: 'brass', w: 512, h: 320 }),
+    0.42,
+    0.26,
+    -1.66,
+    1.12,
+    17.25,
+    -Math.PI / 2,
+    0,
+    M.brass,
+    0.35,
+  );
+  c.reg(
+    {
+      id: 'easter_egg_gavin',
+      label: 'Read Small Brass Plaque',
+      actionType: 'modal',
+      modalId: 'easter_egg_gavin',
+      maxDistance: 3.2,
+    },
+    -1.7,
+    1.12,
+    17.25,
+    0.22,
+    0.45,
+    0.55,
+  );
   pottedPlant(c, k, -7.1, 14.5, 1, 3);
   pottedPlant(c, k, 7.1, 11.7, 1.05, 4);
   pottedPlant(c, k, 7.1, 17.1, 1.1, 8);
@@ -1959,19 +1989,28 @@ function buildTea(c: Ctx): void {
   doorTrim(k.at(8.36, 0, 8.5, Math.PI / 2), M, 2.6, 3.6);
   doorTrim(k.at(8.36, 0, 14.85, Math.PI / 2), M, 2.7, 3.4);
 
-  // --- Crystal partition at Z=11 ---
+  // --- Crystal partition at Z=11 (West half X:8.4..13.5 is clear viewing glass; East half X:13.5..19.65 is a solid walnut gallery wall) ---
   const gk = k;
-  gk.panel(M.glass, 11.3, 3.9, 14, 2.45, 11);
-  gk.box(M.walnutRed, 11.3, 0.45, 0.4, 14, 0, 11);
-  gk.box(M.brass, 11.3, 0.06, 0.42, 14, 0.45, 11);
-  gk.box(M.brass, 11.3, 0.12, 0.2, 14, 4.38, 11);
-  gk.box(M.brass, 11.3, 0.05, 0.07, 14, 3.4, 11);
-  for (let i = 0; i <= 8; i++) gk.box(M.brass, 0.07, 3.95, 0.12, 8.4 + (i * 11.2) / 8, 0.5, 11);
-  for (let i = 0; i < 8; i++) {
-    const cx = 8.4 + ((i + 0.5) * 11.2) / 8;
+  gk.panel(M.glass, 5.2, 3.9, 10.95, 2.45, 11);
+  gk.box(M.walnutRed, 5.2, 0.45, 0.4, 10.95, 0, 11);
+  gk.box(M.brass, 5.2, 0.06, 0.42, 10.95, 0.45, 11);
+  gk.box(M.brass, 11.3, 0.12, 0.22, 14, 4.38, 11);
+  gk.box(M.brass, 5.2, 0.05, 0.07, 10.95, 3.4, 11);
+  for (let i = 0; i <= 4; i++) gk.box(M.brass, 0.07, 3.95, 0.12, 8.4 + (i * 5.1) / 4, 0.5, 11);
+  for (let i = 0; i < 4; i++) {
+    const cx = 8.4 + ((i + 0.5) * 5.1) / 4;
     gk.torus(M.brass, 0.34, 0.018, cx, 3.88, 11);
     gk.put(new THREE.CircleGeometry(0.15, 20), i % 2 ? M.petalGold : M.orchidCyan, cx, 3.88, 11.01);
     gk.put(new THREE.CircleGeometry(0.15, 20), i % 2 ? M.petalGold : M.orchidCyan, cx, 3.88, 10.99, 0, Math.PI);
+  }
+  // Solid walnut-and-brass gallery wall on the East half (X: 13.5..19.7, Z: 10.75..11.25)
+  // Completely opaque from the South Booth; the Botanical Grid Mural faces NORTH into the North Booth!
+  gk.box(M.walnutRed, 6.2, 4.45, 0.46, 16.6, 0, 11);
+  gk.box(M.brass, 6.24, 0.07, 0.5, 16.6, 0.95, 11);
+  gk.box(M.brass, 6.24, 0.07, 0.5, 16.6, 4.38, 11);
+  // Decorative solid brass diamond trim on the South-facing back of the gallery wall
+  for (const dx of [14.8, 16.6, 18.4]) {
+    gk.torus(M.brass, 0.36, 0.022, dx, 2.55, 11.25);
   }
   // Speaking tube
   for (const s of [-1, 1]) {
@@ -1980,25 +2019,19 @@ function buildTea(c: Ctx): void {
     f.torus(M.brass, 0.2, 0.02, 0, 0, 0.35);
     f.put(new THREE.CylinderGeometry(0.08, 0.08, 0.2, 18), M.copper, 0, 0, 0.06, Math.PI / 2);
   }
-  // Ferns along the north side keep the mural private to the North Booth
-  gk.box(M.walnutRed, 9.6, 0.5, 0.34, 14.8, 0, 10.6);
-  gk.box(M.soil, 9.5, 0.04, 0.28, 14.8, 0.49, 10.6);
+  // Low decorative planter under the clear glass window (leaves clear partner sightline above waist!)
+  gk.box(M.walnutRed, 4.2, 0.42, 0.32, 11.1, 0, 10.6);
+  gk.box(M.soil, 4.1, 0.04, 0.26, 11.1, 0.41, 10.6);
   const r = makeRng(21);
-  for (let i = 0; i < 30; i++) {
-    const x = 10.2 + i * 0.315;
-    gk.put(fernGeo(15, 1.0 + r() * 0.35, 60 + i, 0.17, 0.5), [M.leaf, M.leafDark, M.leafLime][i % 3], x, 0.5, 10.6, 0, r() * 6, 0, 0.5, 1.55 + (i % 3) * 0.4, 0.3);
-  }
-  for (let i = 0; i < 8; i++) {
-    const x = 12.6 + i * 0.92;
-    gk.put(new THREE.TorusGeometry(0.2, 0.015, 6, 16), M.brass, x, 3.75, 10.62);
-    gk.put(fernGeo(13, 0.8, 90 + i, 0.14, 1.5), M.leafLime, x, 3.35, 10.62, 0, i, 0, 0.75, 0.9, 0.4);
-    gk.cyl(M.terracotta, 0.17, 0.1, 0.24, x, 3.2, 10.62, 12);
-    gk.rod(M.brass, 0.006, [x, 3.4, 10.62], [x, 4.4, 10.62], 4);
+  for (let i = 0; i < 10; i++) {
+    const x = 9.3 + i * 0.4;
+    gk.put(fernGeo(11, 0.42 + r() * 0.14, 60 + i, 0.14, 0.4), [M.leaf, M.leafDark, M.leafLime][i % 3], x, 0.42, 10.6, 0, r() * 6, 0, 0.45, 0.65, 0.3);
   }
 
-  // --- North booth mural ---
-  plaque(c, k, M.T.mural, 5.1, 3.4, 16.45, 2.35, 5.43, 0, 0, M.walnutRed, 0.42);
-  c.reg({ id: 'clue_tea_north_mural', label: 'Study the Botanical Grid Mural', actionType: 'clue', clueId: 'clue_tea_north_mural', maxDistance: 4.6 }, 16.45, 2.1, 5.5, 5.3, 3.8, 0.3);
+  // --- North booth mural (mounted on the NORTH-facing side of the solid gallery wall at Z=10.74!) ---
+  // 100% physically invisible from the South Booth; fully readable from inside the North Booth!
+  plaque(c, k, M.T.mural, 5.1, 3.2, 16.55, 2.35, 10.74, Math.PI, 0, M.walnutRed, 0.42);
+  c.reg({ id: 'clue_tea_north_mural', label: 'Study the Botanical Grid Mural', actionType: 'clue', clueId: 'clue_tea_north_mural', maxDistance: 4.6 }, 16.55, 2.15, 10.6, 5.3, 3.5, 0.35);
   k.box(M.walnutRed, 2.2, 0.1, 0.5, 10.4, 0.42, 6.75);
   k.box(M.velvetRed, 2.1, 0.1, 0.46, 10.4, 0.5, 6.75);
   for (const x of [9.5, 11.3]) k.box(M.walnutRed, 0.1, 0.42, 0.45, x, 0, 6.75);
@@ -3352,14 +3385,20 @@ function buildWorkshop(c: Ctx): void {
     c.ambient.push((t) => (spin.rotation.z = t * speed));
     B.kit('workshop').at(x, y, z, ry).put(new THREE.CylinderGeometry(r * 0.1, r * 0.1, 0.5, 14), M.darkIron, 0, 0, -0.1, Math.PI / 2);
   };
+  // Wall cogs: every spinning cog meshes tooth-to-tooth with an adjacent cog!
+  // North wall train (4 meshing gears: 28T <-> 16T <-> 14T, and 28T <-> 12T)
   cog(17.4, 3.0, -13.4, 0, 28, 1.75, 0.18, M.brass);
   cog(20.02, 3.82, -13.38, 0, 16, 1.0, -0.315, M.copper);
   cog(21.4, 2.55, -13.38, 0, 14, 0.88, 0.36, M.brassDark);
-  cog(15.2, 4.6, -13.42, 0, 12, 0.75, -0.42, M.copper);
+  cog(15.42, 4.50, -13.42, 0, 12, 0.75, -0.42, M.copper);
+  // West wall pair (24T <-> 14T meshing at distance 2.136 ≈ 1.35 + 0.80)
   cog(12.55, 3.6, -10.6, Math.PI / 2, 24, 1.35, 0.2, M.brassDark);
-  cog(12.55, 2.3, -12.55, Math.PI / 2, 14, 0.8, -0.34, M.copper);
+  cog(12.55, 2.45, -12.40, Math.PI / 2, 14, 0.8, -0.34, M.copper);
+  // East wall pairs (each 18T gear meshes with a 10T brass drive pinion!)
   cog(25.45, 4.4, -9.8, -Math.PI / 2, 18, 0.95, 0.3, M.brass);
+  cog(25.45, 3.45, -10.92, -Math.PI / 2, 10, 0.54, -0.54, M.brassDark);
   cog(25.45, 4.4, -2.2, -Math.PI / 2, 18, 0.95, -0.3, M.copper);
+  cog(25.45, 3.45, -1.08, -Math.PI / 2, 10, 0.54, 0.54, M.brassDark);
 
   // --- Gear-Train workbench (south wall) ---
   const bx = 17.4;
@@ -3370,44 +3409,77 @@ function buildWorkshop(c: Ctx): void {
   bk.box(M.walnut, 5, 0.06, 0.8, 0, 0.25, 0);
   bk.box(M.walnut, 5.2, 1.9, 0.1, 0, 0.97, -0.42);
   bk.box(M.brass, 5.3, 0.08, 0.14, 0, 2.85, -0.42);
+  // Horizontal slotted brass guide rail so mounted gears slide into exact tooth-to-tooth mesh!
+  bk.box(M.brassDark, 4.6, 0.14, 0.08, 0.1, 1.73, -0.36);
   for (let i = 0; i < 6; i++) bk.box([M.copper, M.darkIron, M.brass][i % 3], 0.25, 0.2, 0.3, -2.1 + i * 0.8, 0.31, 0.1, i);
   bk.box(M.darkIron, 0.5, 0.2, 0.35, 2.2, 0.97, 0.2);
   bk.rod(M.walnut, 0.02, [1.4, 1.0, 0.3], [1.8, 1.0, 0.1]);
   const root = group(scene, bx, 0, bz, Math.PI);
-  const motor = group(root, -2.0, 1.72, -0.18, 0, (g) => g.put(gearGeo(12, 0.24, 0.09), M.copper));
-  bk.box(M.darkIron, 0.6, 0.6, 0.2, -2.0, 1.42, -0.32);
+  // Consistent gear pitch radius = teeth * 0.019 so every meshing pair touches tooth-to-tooth!
+  const GEAR_MOD = 0.019;
+  const gearR = (teeth: number): number => teeth * GEAR_MOD;
+  const MOTOR_X = -1.78;
+  const MOTOR_R = gearR(12); // 0.228m
+  const motor = group(root, MOTOR_X, 1.8, -0.14, 0, (g) => g.put(gearGeo(12, MOTOR_R, 0.1), M.copper));
+  bk.box(M.darkIron, 0.54, 0.54, 0.2, MOTOR_X, 1.53, -0.32);
   const gearCache: Record<string, THREE.BufferGeometry> = {};
-  const gearR = (teeth: number): number => 0.018 * teeth + 0.04;
-  const shafts = [-1.05, 0.15, 1.45].map((sx, i) => {
-    bk.put(new THREE.CylinderGeometry(0.05, 0.05, 0.4, 14), M.silver, sx, 1.8, -0.2, Math.PI / 2);
-    bk.torus(M.brass, 0.14, 0.025, sx, 1.8, -0.36);
-    bk.panel(paintedMat(makePlaqueTexture(`SHAFT ${i + 1}`, `${[30, 40, 20][i]} RPM`, { style: 'brass', w: 256, h: 128 }), 0.35), 0.42, 0.21, sx, 2.62, -0.36);
+  const EMPTY_R = 0.34;
+  const shafts = [0, 1, 2].map((i) => {
+    const carriage = group(root, 0, 1.8, -0.14, 0);
+    // Sliding shaft collar & axle
+    const axle = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.36, 14), M.silver);
+    axle.rotation.x = Math.PI / 2;
+    axle.position.z = -0.06;
+    carriage.add(axle);
+    const collar = new THREE.Mesh(new THREE.TorusGeometry(0.11, 0.02, 10, 20), M.brass);
+    collar.position.z = -0.2;
+    carriage.add(collar);
+    const labelMesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.42, 0.21),
+      paintedMat(makePlaqueTexture(`SHAFT ${i + 1}`, `${[30, 40, 20][i]} RPM`, { style: 'brass', w: 256, h: 128 }), 0.35),
+    );
+    labelMesh.position.set(0, 0.82, -0.21);
+    carriage.add(labelMesh);
     const lamp = M.glow(0x64ff8c, 0.05);
-    group(root, sx, 2.4, -0.34, 0, (g) => g.sph(lamp, 0.045));
-    const spin = group(root, sx, 1.8, -0.12, 0);
+    const lampMesh = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 8), lamp);
+    lampMesh.position.set(0, 0.6, -0.19);
+    carriage.add(lampMesh);
+    const spin = group(carriage, 0, 0, 0, 0);
     const mesh = new THREE.Mesh(new THREE.BufferGeometry(), i === 1 ? M.copper : M.brass);
     mesh.castShadow = true;
     mesh.visible = false;
     spin.add(mesh);
-    return { spin, mesh, lamp, cur: null as string | null };
+    return { carriage, spin, mesh, lamp, cur: null as string | null };
   });
   c.updaters.push((f) => {
     const solved = f.state.solvedPuzzles.p9_gear_train;
     motor.rotation.z -= f.dt * (60 / 60) * TAU * 0.35;
+    let curX = MOTOR_X;
+    let prevR = MOTOR_R;
+    let driven = true;
     shafts.forEach((s, i) => {
       const teeth = f.p.gearSlots[i];
+      const r = teeth ? gearR(Number(teeth)) : EMPTY_R;
+      // Mounted gears slide into exact tooth-to-tooth contact; empty shafts leave a clear air gap
+      curX += prevR + r + (teeth ? 0.005 : 0.12);
+      prevR = r + (teeth ? 0 : 0.12);
+      s.carriage.position.x = curX;
+
       if (teeth !== s.cur) {
         s.cur = teeth;
         s.mesh.visible = teeth !== null;
         if (teeth) {
-          gearCache[teeth] ??= gearGeo(Number(teeth), gearR(Number(teeth)), 0.1);
+          gearCache[teeth] ??= gearGeo(Number(teeth), r, 0.1);
           s.mesh.geometry = gearCache[teeth];
         }
       }
-      if (teeth) {
+      if (!teeth) {
+        driven = false;
+      } else if (driven) {
         const rpm = 720 / Number(teeth);
         s.spin.rotation.z += f.dt * (rpm / 60) * TAU * (solved ? 0.8 : 0.35) * (i % 2 ? -1 : 1);
       }
+      // Disconnected downstream gears after an empty shaft DO NOT SPIN!
       s.lamp.emissiveIntensity = solved ? 2.4 : 0.05;
     });
   });
@@ -4654,7 +4726,7 @@ export const DECOR_COLLIDERS: BoxCollider[] = [
   box('balance', 19.2, 14.9, 0.9, 2.6, 1),
   box('cabinet', 11.6, 17.4, 2.2, 0.6, 2.4),
   box('tea_table', 9.5, 17, 0.9, 0.9, 0.8),
-  box('tea_planter', 14.8, 10.6, 9.6, 0.4, 2),
+  box('tea_planter', 11.1, 10.6, 4.2, 0.35, 0.9),
   box('tea_bench', 10.4, 6.75, 2.2, 0.5, 0.6),
   box('bookshelves', -16.05, 5.6, 7.1, 0.5, 3.6),
   box('desk', -10.3, 6.95, 2.4, 1.0, 0.9),
