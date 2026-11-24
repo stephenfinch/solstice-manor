@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Solstice Manor — 2-Player LAN Escape Room</title>
+    <link rel="stylesheet" href="/src/client/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <div id="canvas-container"></div>
+
+      <!-- Lobby Overlay -->
+      <div id="lobby-overlay" class="overlay-screen">
+        <div class="lobby-card">
+          <div class="lobby-emblem">☀</div>
+          <h1 class="lobby-title">SOLSTICE MANOR</h1>
+          <p class="lobby-subtitle">A 2-Player Cooperative First-Person LAN Escape Room</p>
+          <p class="lobby-blurb">
+            Master Horologist Aurelius Vance has departed by skyship, leaving his sunlit hilltop estate sealed behind his Grand Solstice Exam. Work together across indoor studies, glass conservatories, workshops, and sunlit courtyards to recover the four Resonance Cores and open the Solstice Gate.
+          </p>
+
+          <div class="lan-banner" id="lan-banner">
+            <span class="lan-label">LAN Join URL:</span>
+            <code id="lan-url">Loading...</code>
+            <button id="copy-lan-btn" class="btn-small" title="Copy LAN URL">Copy</button>
+          </div>
+
+          <div class="lobby-form" id="lobby-join-form">
+            <div class="field-row">
+              <label for="player-name">Your Apprentice Name</label>
+              <input id="player-name" type="text" maxlength="18" placeholder="Apprentice" value="" />
+            </div>
+
+            <div class="lobby-actions">
+              <button id="create-room-btn" class="btn-primary">Create New Estate Session</button>
+              <div class="join-divider"><span>OR JOIN PARTNER</span></div>
+              <div class="join-row">
+                <input id="room-code-input" type="text" maxlength="6" placeholder="ROOM CODE" />
+                <button id="join-room-btn" class="btn-secondary">Join Room</button>
+              </div>
+            </div>
+
+            <div id="active-rooms-box" class="active-rooms-box hidden">
+              <div class="active-rooms-title">Active Sessions on This LAN</div>
+              <div id="active-rooms-list"></div>
+            </div>
+            <div id="lobby-error" class="error-text hidden"></div>
+          </div>
+
+          <div class="lobby-waiting hidden" id="lobby-waiting">
+            <div class="room-code-display">
+              <span class="code-label">SHARE THIS ROOM CODE</span>
+              <span class="code-value" id="waiting-room-code">----</span>
+            </div>
+            <div class="players-slots" id="players-slots"></div>
+            <p class="waiting-tip">
+              Open <strong id="waiting-lan-url"></strong> on your partner's browser on the same Wi-Fi/LAN and enter the code above!
+            </p>
+            <div class="waiting-buttons">
+              <button id="enter-manor-btn" class="btn-primary">Enter Solstice Manor</button>
+              <button id="leave-room-btn" class="btn-ghost">Leave</button>
+            </div>
+          </div>
+
+          <div class="controls-strip">
+            <span><b>WASD</b> Walk</span>
+            <span><b>Mouse</b> Look</span>
+            <span><b>E / Click</b> Interact</span>
+            <span><b>F</b> UV Lamp</span>
+            <span><b>Q</b> Coop Ping</span>
+            <span><b>N</b> Notebook</span>
+            <span><b>C</b> Calculator</span>
+            <span><b>H</b> Oracle Hint</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- In-Game HUD -->
+      <div id="hud" class="hidden">
+        <div id="zone-banner">
+          <div id="zone-name">Grand Foyer</div>
+          <div id="zone-sub">Indoor • Clockmaker's Entry</div>
+        </div>
+
+        <div id="top-right-hud">
+          <div class="hud-pill" id="timer-pill" title="Elapsed Time">⏱ <span id="elapsed-time">00:00</span></div>
+          <div class="hud-pill" id="cores-pill" title="Resonance Cores Placed">✦ <span id="cores-count">0/4</span> Cores</div>
+          <div class="hud-pill" id="partner-pill" title="Partner Status">
+            <span class="status-dot" id="partner-dot"></span>
+            <span id="partner-status">Waiting for Partner...</span>
+          </div>
+          <button class="hud-btn" id="hint-hud-btn" title="Open Clockwork Oracle Hint Minigame (H)">
+            🔮 Oracle <span id="hint-cooldown-badge">READY</span>
+          </button>
+          <button class="hud-btn" id="audio-mute-btn" title="Toggle Audio (M)">🔊</button>
+        </div>
+
+        <!-- Crosshair & Interaction Prompt -->
+        <div id="crosshair">
+          <div class="crosshair-dot"></div>
+          <div class="crosshair-ring"></div>
+        </div>
+        <div id="interact-prompt" class="hidden">
+          <span class="key-cap">E</span>
+          <span id="interact-label">Inspect</span>
+        </div>
+
+        <!-- Coop Alert Banner (e.g. "Partner pulled Left Lever — Pull Right Lever NOW!") -->
+        <div id="coop-banner" class="hidden"></div>
+
+        <!-- Toast Notifications -->
+        <div id="toast-container"></div>
+
+        <!-- Bottom Hotbar & Quick Tools -->
+        <div id="bottom-bar">
+          <div id="inventory-bar"></div>
+          <div id="tool-shortcuts">
+            <button class="tool-btn" id="btn-notebook" title="Field Notebook (N)">📖 Notebook <kbd>N</kbd></button>
+            <button class="tool-btn" id="btn-calculator" title="Brass Calculator (C)">🧮 Calc <kbd>C</kbd></button>
+            <button class="tool-btn" id="btn-ping" title="Coop Beacon Ping (Q)">📍 Ping <kbd>Q</kbd></button>
+          </div>
+        </div>
+
+        <!-- Click to Resume Pointer Lock Banner -->
+        <div id="pointer-lock-banner" class="hidden">
+          <div class="pl-card">
+            <div class="pl-title">Click anywhere to look around</div>
+            <div class="pl-sub">Press <b>ESC</b> anytime to pause or use HUD buttons • <b>N</b> Notebook • <b>C</b> Calculator • <b>H</b> Oracle Hint</div>
+            <div class="pl-room">Room Code: <strong id="hud-room-code">----</strong></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Dynamic Puzzle / Reading Modal Container -->
+      <div id="modal-backdrop" class="hidden">
+        <div id="modal-panel" class="brass-modal">
+          <div class="modal-header">
+            <h2 id="modal-title">Inspect</h2>
+            <button id="modal-close-btn" class="modal-close" title="Close (Esc)">✕</button>
+          </div>
+          <div id="modal-body"></div>
+        </div>
+      </div>
+
+      <!-- Field Notebook Drawer -->
+      <div id="notebook-drawer" class="side-drawer hidden">
+        <div class="drawer-header">
+          <h3>📖 Apprentice's Field Notebook</h3>
+          <button id="notebook-close-btn" class="modal-close">✕</button>
+        </div>
+        <div class="drawer-tabs">
+          <button class="tab-btn active" data-tab="clues">Discovered Clues</button>
+          <button class="tab-btn" data-tab="hints">Oracle Hints</button>
+          <button class="tab-btn" data-tab="notes">Shared Scratchpad</button>
+        </div>
+        <div id="notebook-content" class="drawer-body"></div>
+      </div>
+
+      <!-- Brass Mechanical Calculator Floating Widget -->
+      <div id="calculator-widget" class="floating-widget hidden">
+        <div class="widget-header">
+          <span>🧮 Brass Arithmometer</span>
+          <button id="calc-close-btn" class="modal-close">✕</button>
+        </div>
+        <div id="calc-body"></div>
+      </div>
+
+      <!-- 2-Player Cooperative Hint Minigame Overlay -->
+      <div id="minigame-overlay" class="overlay-screen hidden"></div>
+
+      <!-- Victory Screen Overlay -->
+      <div id="victory-overlay" class="overlay-screen hidden"></div>
+    </div>
+
+    <script type="module" src="/src/client/main.ts"></script>
+  </body>
+</html>
