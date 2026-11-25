@@ -199,6 +199,7 @@ export function createHud(callbacks: {
   const partnerDot = byId('partner-dot');
   const partnerStatus = byId('partner-status');
   const hintBtn = byId<HTMLButtonElement>('hint-hud-btn');
+  const hintLabel = byId('hint-btn-label');
   const hintBadge = byId('hint-cooldown-badge');
   const muteBtn = byId<HTMLButtonElement>('audio-mute-btn');
   const crosshair = byId('crosshair');
@@ -212,6 +213,7 @@ export function createHud(callbacks: {
   const victoryOverlay = byId('victory-overlay');
 
   let latest: WorldState | null = null;
+  let myId = '';
   let selected: ItemId | null = null;
   let lastInventoryKey = '';
   let lastZoneId = '';
@@ -237,8 +239,13 @@ export function createHud(callbacks: {
   }
   bindButton('audio-mute-btn', toggleMute);
 
+  /** The hotbar only ever shows what this player is carrying, never the team union. */
+  function myItems(state: WorldState | null): ItemId[] {
+    return state?.players[myId]?.inventory ?? [];
+  }
+
   function toggleSlot(index: number): void {
-    const item = latest?.inventory[index];
+    const item = myItems(latest)[index];
     if (!item) return;
     // Re-selecting the lamp flips its light instead of putting it away.
     callbacks.onSelectItem(item === selected && item !== 'tool_uv_lamp' ? null : item);
@@ -265,11 +272,12 @@ export function createHud(callbacks: {
   );
 
   function renderInventory(state: WorldState): void {
-    const key = `${state.inventory.join(',')}|${selected ?? ''}`;
+    const myInv = myItems(state);
+    const key = `${myInv.join(',')}|${selected ?? ''}`;
     if (key === lastInventoryKey) return;
     lastInventoryKey = key;
 
-    if (state.inventory.length === 0) {
+    if (myInv.length === 0) {
       inventoryBar.replaceChildren();
       inventoryBar.classList.add('is-empty');
       knownItems = new Set();
@@ -277,7 +285,7 @@ export function createHud(callbacks: {
     }
     inventoryBar.classList.remove('is-empty');
 
-    const slots: HTMLElement[] = state.inventory.map((id, i) => {
+    const slots: HTMLElement[] = myInv.map((id, i) => {
       const def = ITEMS[id];
       const pill = CATEGORY_PILL[def.category];
       const isNew = knownItems !== null && !knownItems.has(id);
@@ -302,7 +310,7 @@ export function createHud(callbacks: {
       return btn;
     });
 
-    const def = selected && state.inventory.includes(selected) ? ITEMS[selected] : null;
+    const def = selected && myInv.includes(selected) ? ITEMS[selected] : null;
     const caption = def
       ? el(
           'div',
@@ -321,10 +329,11 @@ export function createHud(callbacks: {
                     ? ' · Solstice Gate'
                     : '',
           ),
+          el('span', { class: 'inv-pass' }, ' · ', el('kbd', {}, 'G'), ' Pass / Drop'),
         )
       : null;
     inventoryBar.replaceChildren(...(caption ? [caption] : []), el('div', { class: 'inv-slots' }, ...slots));
-    knownItems = new Set(state.inventory);
+    knownItems = new Set(myInv);
   }
 
   // `update` runs every frame, so only touch the DOM when text really changed.
@@ -372,25 +381,42 @@ export function createHud(callbacks: {
     if (!latest) return;
     const now = Date.now();
     setText(elapsed, formatDuration((latest.completedAt ?? now) - latest.startedAt));
-    const ready = now >= latest.hintCooldownEndsAt;
+    renderHintButton(latest, now);
+    refreshLockBanner();
+  }
+
+  function renderHintButton(state: WorldState, now: number): void {
+    const off = state.hintMode === 'none';
+    hintBtn.classList.toggle('hidden', off);
+    hintBtn.previousElementSibling?.classList.toggle('hidden', off);
+    if (off) return;
+
+    const unlimited = state.hintMode === 'unlimited';
+    const ready = unlimited || now >= state.hintCooldownEndsAt;
     hintBtn.classList.toggle('ready', ready);
     hintBtn.classList.toggle('cooling', !ready);
-    const waiting = latest.minigame.phase === 'lobby' ? latest.minigame.readyPlayers.length : 0;
-      setText(
-        hintBadge,
-        ready
+    const title = unlimited ? 'Hint Ledger (H)' : 'Clockwork Oracle Hint Minigame (H)';
+    if (hintBtn.title !== title) hintBtn.title = title;
+    setText(hintLabel, unlimited ? 'Hints' : 'Oracle');
+
+    const waiting = state.minigame.phase === 'lobby' ? state.minigame.readyPlayers.length : 0;
+    setText(
+      hintBadge,
+      unlimited
+        ? 'Free'
+        : ready
           ? waiting > 0
             ? `${waiting}/2`
             : 'Ready'
-          : formatDuration(latest.hintCooldownEndsAt - now, true),
-      );
-    refreshLockBanner();
+          : formatDuration(state.hintCooldownEndsAt - now, true),
+    );
   }
   window.setInterval(tickClocks, 250);
 
   return {
     update(state, myPlayerId, myZone, selectedItem) {
       latest = state;
+      myId = myPlayerId;
       selected = selectedItem;
 
       if (myZone.id !== lastZoneId) {
@@ -404,9 +430,14 @@ export function createHud(callbacks: {
       }
 
       const placed = CORE_NAMES.filter((c) => state.puzzles.gateCoresInserted[c]).length;
-      const held = CORE_NAMES.filter((c) => state.inventory.includes(`core_${c}`)).length;
+      const held = CORE_NAMES.filter(
+        (c) =>
+          !state.puzzles.gateCoresInserted[c] &&
+          (state.inventory.includes(`core_${c}`) ||
+            state.droppedItems.some((d) => d.itemId === `core_${c}`)),
+      ).length;
       setText(coresCount, `${placed + held}/4`);
-      coresPill.title = `Resonance Cores: ${held} carried, ${placed} placed in the Solstice Gate`;
+      coresPill.title = `Resonance Cores: ${held} carried by the team, ${placed} placed in the Solstice Gate`;
       coresPill.classList.toggle('complete', placed + held === 4);
 
       renderPartner(state, myPlayerId);

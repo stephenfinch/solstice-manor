@@ -1251,27 +1251,6 @@ svg text {
 .tea-scale.level .scale-verdict {
   fill: var(--emerald-hi);
 }
-.readings {
-  display: grid;
-  gap: 8px;
-  width: 210px;
-  flex: none;
-}
-.reading {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  padding: 7px 13px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  background: rgba(0, 0, 0, 0.25);
-  color: var(--parchment-2);
-}
-.reading b {
-  color: var(--amber);
-  font-size: 1.15rem;
-  font-variant-numeric: tabular-nums;
-}
 .tea-row {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -3216,8 +3195,7 @@ button.casket:disabled {
   .tea-top {
     flex-direction: column;
   }
-  .split-side,
-  .readings {
+  .split-side {
     width: 100%;
   }
   .split > svg,
@@ -4602,4 +4580,471 @@ button.casket:disabled {
   border-radius: 50%;
   background: var(--sage);
   opacity: 0.85;
+}
+
+/* ============================================================
+   V2 — Lobby customizer, hint modes, tea lamps, pocket watch
+   ============================================================ */
+
+/* --- Lobby: tightened so the customizer fits a 720px-tall window --- */
+.lobby-card {
+  max-width: 424px;
+  padding: 22px 28px 14px;
+}
+.lobby-mark {
+  margin-bottom: 4px;
+}
+.lobby-title {
+  font-size: 29px;
+}
+.lobby-subtitle {
+  margin-bottom: 14px;
+}
+.lobby-form {
+  gap: 12px;
+}
+.lobby-form .field-row {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+}
+.lobby-form .field-row label {
+  flex: none;
+  margin: 0;
+}
+.lobby-form .field-row input {
+  flex: 1;
+  min-width: 0;
+  padding-block: 8px;
+}
+.lobby-form .lobby-actions {
+  gap: 8px;
+}
+.lobby-form .lobby-actions button {
+  padding-block: 9px;
+}
+.lobby-form .join-divider {
+  margin: 0;
+}
+.lobby-form .join-row input {
+  padding-block: 8px;
+}
+.lobby-form .error-text {
+  margin-top: 0;
+  padding-block: 5px;
+  font-size: 12.5px;
+}
+#active-rooms-list {
+  max-height: 62px;
+  overflow-y: auto;
+}
+.lobby-card .active-rooms-box {
+  margin-top: 0;
+  padding: 8px 12px;
+}
+.lobby-card .active-rooms-title {
+  margin-bottom: 3px;
+}
+.lobby-card .active-room-row {
+  padding: 2px 0;
+}
+.lobby-card .active-room-row .room-meta {
+  font-size: 12.5px;
+}
+.lobby-card .active-room-row .btn-small {
+  padding: 2px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+.lobby-card .lan-banner {
+  margin: 14px 0 0;
+  padding: 10px 0 0;
+}
+
+/* --- Apprentice look --- */
+.lobby-customizer {
+  --look-coat: #2c6e58;
+  --look-lens: #f5b942;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+}
+.look-rows {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+.swatch-row,
+.hint-mode-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.swatch-label {
+  flex: none;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.look-rows .swatch-label {
+  width: 34px;
+}
+.swatch-set {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.swatch-btn {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 50%;
+  background: var(--swatch);
+  box-shadow: none;
+  transition: box-shadow 140ms ease, transform 120ms ease;
+}
+.swatch-btn.swatch-sm {
+  width: 16px;
+  height: 16px;
+}
+.swatch-btn:hover {
+  transform: scale(1.1);
+}
+.swatch-btn.active {
+  border-color: transparent;
+  box-shadow: 0 0 0 2px var(--surface-solid), 0 0 0 3.5px var(--gold);
+}
+.seg-group {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.24);
+}
+.seg-btn {
+  flex: 1 1 auto;
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.3;
+  white-space: nowrap;
+  transition: color 130ms ease, background 130ms ease;
+}
+.seg-btn:hover {
+  color: var(--ivory);
+}
+.seg-btn.active {
+  border-color: var(--gold-border);
+  background: var(--gold-soft);
+  color: var(--gold);
+}
+.lobby-card :is(.swatch-btn, .seg-btn):focus-visible {
+  outline: 2px solid var(--ivory);
+  outline-offset: 3px;
+}
+
+/* Live preview: follows whichever picker buttons carry .active */
+.look-preview {
+  flex: none;
+  width: 64px;
+  height: 80px;
+  border-radius: 8px;
+  background: radial-gradient(circle at 50% 42%, rgba(213, 178, 110, 0.17), transparent 70%);
+}
+.look-coat,
+.look-hat {
+  fill: var(--look-coat);
+  stroke: rgba(255, 255, 255, 0.22);
+  stroke-width: 0.8;
+  stroke-linejoin: round;
+  transition: fill 160ms ease;
+}
+.look-hat-tophat {
+  fill: #2a231d;
+}
+.look-hat-aviator {
+  fill: #6b4526;
+}
+.look-band {
+  fill: var(--gold);
+  stroke: none;
+}
+.look-stem,
+.look-lapel {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.3);
+  stroke-width: 1;
+  stroke-linecap: round;
+}
+.look-skin {
+  fill: #d8ab86;
+}
+.look-hair {
+  fill: #5a3d28;
+}
+.look-brass {
+  fill: var(--gold);
+}
+.look-strap {
+  fill: none;
+  stroke: #4a3420;
+  stroke-width: 2;
+}
+.look-lens {
+  fill: var(--look-lens);
+  stroke: #b58a44;
+  stroke-width: 1.6;
+  transition: fill 160ms ease;
+}
+.look-glint {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.8);
+  stroke-width: 0.9;
+  stroke-linecap: round;
+}
+.look-hat {
+  display: none;
+}
+.lobby-customizer:has([data-hat='tophat'].active) .look-hat-tophat,
+.lobby-customizer:has([data-hat='beret'].active) .look-hat-beret,
+.lobby-customizer:has([data-hat='aviator'].active) .look-hat-aviator {
+  display: inline;
+}
+.lobby-customizer:has([data-coat='#7d3448'].active) {
+  --look-coat: #7d3448;
+}
+.lobby-customizer:has([data-coat='#2e4a73'].active) {
+  --look-coat: #2e4a73;
+}
+.lobby-customizer:has([data-coat='#9c6528'].active) {
+  --look-coat: #9c6528;
+}
+.lobby-customizer:has([data-coat='#4f3d6e'].active) {
+  --look-coat: #4f3d6e;
+}
+.lobby-customizer:has([data-coat='#3d454c'].active) {
+  --look-coat: #3d454c;
+}
+.lobby-customizer:has([data-goggle='#6ec5e9'].active) {
+  --look-lens: #6ec5e9;
+}
+.lobby-customizer:has([data-goggle='#68d391'].active) {
+  --look-lens: #68d391;
+}
+.lobby-customizer:has([data-goggle='#e879a8'].active) {
+  --look-lens: #e879a8;
+}
+
+.waiting-meta {
+  align-self: center;
+  padding: 3px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* --- HUD: pass / drop reminder --- */
+#pointer-lock-banner {
+  bottom: 144px; /* clear of the selected-item caption */
+}
+.inv-caption .inv-pass kbd {
+  min-width: 0;
+  padding: 0 5px;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--gold);
+  font-size: 10.5px;
+  box-shadow: none;
+}
+
+/* --- P3: recipe lamps --- */
+.tea-rules-lamps {
+  flex: none;
+  width: 400px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.tea-lamp {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  align-items: center;
+  gap: 5px 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--muted);
+  font-size: 13.5px;
+  font-variant-numeric: tabular-nums;
+  transition: border-color 180ms ease, background 180ms ease, color 180ms ease;
+}
+.tea-lamp-bulb {
+  width: 15px;
+  height: 15px;
+  border: 2px solid #8f6b34;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #4b3d2c, #1d1610);
+  transition: background 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+}
+.tea-lamp-label {
+  white-space: nowrap;
+}
+.tea-lamp b {
+  grid-column: 2;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--ivory);
+}
+.tea-lamp.lit {
+  border-color: rgba(118, 184, 147, 0.5);
+  background: linear-gradient(120deg, rgba(118, 184, 147, 0.18), rgba(213, 178, 110, 0.1));
+  color: var(--ivory);
+}
+.tea-lamp.lit .tea-lamp-bulb {
+  border-color: var(--gold);
+  background: radial-gradient(circle at 35% 30%, #fff3c4, #8be0b2 48%, #3fa374);
+  box-shadow: 0 0 12px rgba(139, 224, 178, 0.65);
+}
+.tea-lamp.lit b {
+  color: var(--gold);
+}
+@media (max-width: 760px) {
+  .tea-rules-lamps {
+    width: 100%;
+  }
+}
+
+/* --- Foyer pocket watch --- */
+.pocket-watch-svg {
+  display: block;
+  width: 184px;
+  max-width: 60%;
+  height: auto;
+  margin: 4px auto 10px;
+  filter: drop-shadow(0 6px 10px rgba(70, 42, 8, 0.32));
+}
+.watch-brass {
+  fill: url(#pocket-watch-brass);
+  stroke: #6b4717;
+  stroke-width: 1.4;
+}
+.watch-bow {
+  fill: none;
+  stroke: #a87a35;
+  stroke-width: 5;
+}
+.watch-rim {
+  fill: none;
+  stroke: #7a5117;
+  stroke-width: 1.2;
+}
+.watch-dial {
+  fill: #fbf4e2;
+  stroke: #8a672f;
+  stroke-width: 1;
+}
+.watch-tick {
+  stroke: #6a5638;
+  stroke-width: 0.6;
+}
+.watch-tick.major {
+  stroke: #3a2a14;
+  stroke-width: 1.5;
+}
+.watch-num {
+  fill: #3a2a14;
+  font: 500 12px var(--serif);
+  font-variant-numeric: lining-nums;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+.watch-minute {
+  fill: #24446f;
+  stroke: #16304f;
+  stroke-width: 0.5;
+}
+.watch-stub {
+  fill: #24446f;
+  opacity: 0.32;
+}
+.watch-scratch {
+  fill: none;
+  stroke: #7d6a4a;
+  stroke-width: 0.8;
+  stroke-linecap: round;
+  opacity: 0.5;
+}
+.watch-pin {
+  fill: #3a2a14;
+}
+
+/* --- Unlimited hint ledger --- */
+.unlimited-hints-view {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 48px);
+}
+.unlimited-hints-view > * {
+  flex: none;
+}
+.unlimited-hints-view .oracle-field {
+  margin-bottom: 0;
+}
+.unlimited-hints-view .oracle-ready {
+  font-size: 14px;
+}
+.unlimited-hint-list {
+  flex: 0 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+  overflow-y: auto;
+}
+.unlimited-hint {
+  display: flex;
+  flex: none;
+  align-items: baseline;
+  gap: 12px;
+  padding: 11px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.032);
+  user-select: text;
+  -webkit-user-select: text;
+}
+.unlimited-hint .tier-badge {
+  flex: none;
+}
+.unlimited-hint p {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: #dfd6c6;
+}
+.unlimited-empty {
+  margin: 6px 0 2px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
 }

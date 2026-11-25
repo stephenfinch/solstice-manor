@@ -1,5 +1,15 @@
 export type PlayerSlot = 1 | 2;
 
+export type HintMode = 'oracle' | 'unlimited' | 'none';
+
+export type HatStyle = 'tophat' | 'beret' | 'aviator' | 'none';
+
+export interface PlayerAppearance {
+  coatColor: string;
+  hatStyle: HatStyle;
+  goggleColor: string;
+}
+
 export type ZoneId =
   | 'foyer'
   | 'tea_south'
@@ -38,6 +48,14 @@ export interface ItemDef {
   icon: string;
   description: string;
   consumable: boolean; // true for one-and-done keys & placed cores/parts; false for reusable tools
+}
+
+export interface DroppedItem {
+  itemId: ItemId;
+  x: number;
+  y: number;
+  z: number;
+  droppedBy: PlayerSlot;
 }
 
 export type DoorId =
@@ -86,6 +104,7 @@ export interface PlayerTransform {
   yaw: number;
   pitch: number;
   moving: boolean;
+  crouching: boolean;
   zone: ZoneId;
   uvOn: boolean;
   heldItem: ItemId | null;
@@ -98,6 +117,8 @@ export interface PlayerInfo {
   connected: boolean;
   transform: PlayerTransform;
   color: string;
+  appearance: PlayerAppearance;
+  inventory: ItemId[]; // Separate personal inventory per player!
 }
 
 export interface CoopPing {
@@ -178,7 +199,7 @@ export interface WorldPuzzleStates {
   teaWeights: { amber: number; jade: number; rose: number; mint: number };
 
   // P4: UV Safe
-  uvRevealedFrames: number[]; // indices 0..3 discovered under UV
+  uvRevealedFrames: number[]; // indices 0..3 logged to notebook once read under UV
   studySafeDigits: [number, number, number, number];
 
   // P5: Harmonic Pipe Organ (lengths 1..5 in slots 0..4)
@@ -223,17 +244,22 @@ export interface WorldPuzzleStates {
 
 export interface WorldState {
   roomCode: string;
+  hintMode: HintMode;
   startedAt: number;
   completedAt: number | null;
   players: Record<string, PlayerInfo>;
   doors: Record<DoorId, boolean>; // true = open
   solvedPuzzles: Record<PuzzleId, boolean>;
-  // Shared team inventory (items available to the team; keys are deleted upon use!)
+  // Combined team view (union of players' personal inventories for backwards-compatible checks)
   inventory: ItemId[];
-  // Items already picked up from world pedestals (so they disappear in 3D)
+  // Items dropped onto surfaces in the 3D world by players for their partner to pick up!
+  droppedItems: DroppedItem[];
+  // Items already picked up from their original spawn pedestals
   collectedWorldItems: ItemId[];
   // Consumed one-and-done keys log
   consumedKeys: ItemId[];
+  // Interactive exploration props (open drawers, desk lamps, spinning globe, secret books, etc.)
+  props: Record<string, boolean | number>;
   puzzles: WorldPuzzleStates;
   discoveredClues: ClueRecord[];
   unlockedHints: HintEntry[];
@@ -248,16 +274,38 @@ export interface WorldState {
 
 // Client -> Server WebSocket Messages
 export type ClientMessage =
-  | { type: 'create_room'; playerName: string }
-  | { type: 'join_room'; roomCode: string; playerName: string; playerId?: string }
+  | {
+      type: 'create_room';
+      playerName: string;
+      hintMode?: HintMode;
+      appearance?: Partial<PlayerAppearance>;
+    }
+  | {
+      type: 'join_room';
+      roomCode: string;
+      playerName: string;
+      playerId?: string;
+      appearance?: Partial<PlayerAppearance>;
+    }
+  | { type: 'update_appearance'; appearance: Partial<PlayerAppearance> }
   | { type: 'player_move'; transform: PlayerTransform }
   | { type: 'interact'; targetId: string; payload?: Record<string, unknown> }
   | { type: 'pickup_item'; itemId: ItemId }
+  | {
+      type: 'give_or_drop_item';
+      itemId: ItemId;
+      mode: 'partner' | 'drop';
+      x?: number;
+      y?: number;
+      z?: number;
+    }
+  | { type: 'toggle_prop'; propId: string }
   | { type: 'unlock_door'; doorId: DoorId }
   | { type: 'discover_clue'; clueId: string }
   | { type: 'uv_reveal'; frameIndex: number }
   | { type: 'update_notes'; text: string }
   | { type: 'coop_ping'; x: number; y: number; z: number }
+  | { type: 'request_unlimited_hint'; targetPuzzleId?: PuzzleId }
   | { type: 'minigame_ready'; targetPuzzleId?: PuzzleId }
   | { type: 'minigame_cancel' }
   | { type: 'minigame_input'; angle: number; pulse?: boolean }

@@ -482,6 +482,32 @@ const TEAS: { id: Tea; label: string; color: string }[] = [
   { id: 'mint', label: 'Mint', color: '#74c9b4' },
 ];
 
+type TeaWeights = Record<Tea, number>;
+/** The four rules of `clue_tea_balance_plaque`. All four hold only for `SOLUTIONS.p3_tea`. */
+const TEA_RULES: { label: string; reading(w: TeaWeights): string; holds(w: TeaWeights): boolean }[] = [
+  {
+    label: 'Amber + Jade = 15',
+    reading: (w) => `${w.amber + w.jade} g`,
+    holds: (w) => w.amber + w.jade === 15,
+  },
+  {
+    label: 'Amber = Jade + 3',
+    reading: ({ amber, jade }) =>
+      `${amber > jade ? '+' : amber < jade ? '−' : ''}${Math.abs(amber - jade)} g`,
+    holds: (w) => w.amber === w.jade + 3,
+  },
+  {
+    label: 'Rose = 2 × Mint',
+    reading: (w) => `×${Number((w.rose / w.mint).toFixed(2))}`,
+    holds: (w) => w.rose === w.mint * 2,
+  },
+  {
+    label: 'All four = 33',
+    reading: (w) => `${w.amber + w.jade + w.rose + w.mint} g`,
+    holds: (w) => w.amber + w.jade + w.rose + w.mint === 33,
+  },
+];
+
 function teaView(cb: ModalCallbacks, initial: WorldState): View {
   let solved = false;
   const badge = solvedBadge('Perfect blend! A secret drawer slides open — check your Notebook.');
@@ -566,16 +592,32 @@ function teaView(cb: ModalCallbacks, initial: WorldState): View {
     svg('text', { x: ARM, y: 148, class: 'scale-caption' }, '15 g weight'),
   );
 
-  const readings = ['Amber + Jade', 'Amber − Jade', 'Rose ÷ Mint', 'Total weight'].map((label) => {
+  const lamps = TEA_RULES.map((rule) => {
     const value = el('b');
-    return { root: el('div', { class: 'reading' }, el('span', {}, label), value), value };
+    const root = el(
+      'div',
+      { class: 'tea-lamp', role: 'listitem' },
+      el('i', { class: 'tea-lamp-bulb', 'aria-hidden': 'true' }),
+      el('span', { class: 'tea-lamp-label' }, rule.label),
+      value,
+    );
+    return { rule, root, value };
   });
 
   const root = el(
     'div',
     { class: 'puzzle puzzle-tea' },
     badge.node,
-    el('div', { class: 'tea-top' }, scale, el('div', { class: 'readings' }, ...readings.map((r) => r.root))),
+    el(
+      'div',
+      { class: 'tea-top' },
+      scale,
+      el(
+        'div',
+        { class: 'tea-rules-lamps', role: 'list', 'aria-label': 'Recipe lamps' },
+        ...lamps.map((l) => l.root),
+      ),
+    ),
     el('div', { class: 'controls tea-row' }, ...canisters.map((c) => c.root)),
   );
 
@@ -598,11 +640,12 @@ function teaView(cb: ModalCallbacks, initial: WorldState): View {
     leftText.textContent = `${sum} g`;
     verdict.textContent = sum === 15 ? 'Level' : sum > 15 ? 'Left pan heavy' : 'Right pan heavy';
     scale.classList.toggle('level', sum === 15);
-    const diff = w.amber - w.jade;
-    readings[0].value.textContent = `${sum} g`;
-    readings[1].value.textContent = `${diff > 0 ? '+' : diff < 0 ? '−' : ''}${Math.abs(diff)} g`;
-    readings[2].value.textContent = `×${Number((w.rose / w.mint).toFixed(2))}`;
-    readings[3].value.textContent = `${w.amber + w.jade + w.rose + w.mint} g`;
+    for (const { rule, root: lampRoot, value } of lamps) {
+      const lit = rule.holds(w);
+      value.textContent = rule.reading(w);
+      lampRoot.classList.toggle('lit', lit);
+      lampRoot.setAttribute('aria-label', `${rule.label}: ${lit ? 'lit' : 'dark'}, now ${rule.reading(w)}`);
+    }
   }
   return {
     title: 'Apothecary Tea Balance',
@@ -1513,6 +1556,61 @@ function gateView(cb: ModalCallbacks, initial: WorldState): View {
 // ============================================================
 // Clue letters & plaques
 // ============================================================
+/** A stopped watch: minute hand jammed on 7 (:35), hour hand snapped off at the hub. */
+function pocketWatchArt(): SVGSVGElement {
+  const dialText = Array.from({ length: 12 }, (_, i) => {
+    const [x, y] = polar(46, (i + 1) * 30 - 90);
+    return svg('text', { x, y, class: 'watch-num' }, i + 1);
+  });
+  const ticks = Array.from({ length: 60 }, (_, i) => {
+    const [x1, y1] = polar(i % 5 === 0 ? 53.5 : 55.5, i * 6);
+    const [x2, y2] = polar(58.5, i * 6);
+    return svg('line', { x1, y1, x2, y2, class: i % 5 === 0 ? 'watch-tick major' : 'watch-tick' });
+  });
+  return svg(
+    'svg',
+    {
+      viewBox: '-84 -112 168 190',
+      class: 'pocket-watch-svg',
+      role: 'img',
+      'aria-label':
+        'Brass pocket watch. The minute hand points at 7, thirty-five minutes past. The hour hand is missing.',
+    },
+    svg(
+      'defs',
+      {},
+      svg(
+        'linearGradient',
+        { id: 'pocket-watch-brass', x1: '0', y1: '0', x2: '1', y2: '1' },
+        svg('stop', { offset: '0%', 'stop-color': '#f0d595' }),
+        svg('stop', { offset: '48%', 'stop-color': '#c4964a' }),
+        svg('stop', { offset: '100%', 'stop-color': '#7f5720' }),
+      ),
+    ),
+    svg('circle', { cy: -94, r: 13, class: 'watch-bow' }),
+    svg('rect', { x: -7, y: -87, width: 14, height: 17, rx: 3, class: 'watch-brass' }),
+    svg('circle', { r: 73, class: 'watch-brass' }),
+    svg('circle', { r: 66, class: 'watch-rim' }),
+    svg('circle', { r: 62, class: 'watch-dial' }),
+    ...ticks,
+    ...dialText,
+    // The broken stub and the scratches around it deliberately give no hour away.
+    svg(
+      'g',
+      { transform: 'rotate(100)' },
+      svg('path', { d: 'M-1.6,0 L-1.6,-18 L0,-15 L1.6,-21 L1.6,0Z', class: 'watch-stub' }),
+      svg('path', { d: 'M-9,-31 L10,-16 M-11,-23 L8,-33 M-8,-14 L11,-25', class: 'watch-scratch' }),
+    ),
+    svg(
+      'g',
+      { transform: 'rotate(210)' },
+      svg('path', { d: 'M-2,15 L-1.6,-26 L0,-38.5 L1.6,-26 L2,15Z', class: 'watch-minute' }),
+    ),
+    svg('circle', { r: 5, class: 'watch-brass' }),
+    svg('circle', { r: 1.6, class: 'watch-pin' }),
+  );
+}
+
 function clueView(clueId: string): View | null {
   const clue = WORLD_CLUES[clueId];
   if (!clue) return null;
@@ -1524,6 +1622,7 @@ function clueView(clueId: string): View | null {
       'div',
       { class: `parchment${isUv ? ' uv' : ''}` },
       el('div', { class: 'parchment-zone' }, clue.zone),
+      clueId === 'clue_foyer_pocket_watch' && pocketWatchArt(),
       renderClueBody(clue.body),
       el('div', { class: 'saved-badge' }, '✓ Saved to Field Notebook', el('kbd', {}, 'N')),
     ),

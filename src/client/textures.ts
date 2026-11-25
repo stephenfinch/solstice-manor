@@ -883,12 +883,13 @@ function rug(): HTMLCanvasElement {
   ring(492, '#8c2f2a');
   ring(400, '#e9cf95');
   ring(388, '#1f5d5a');
-  ring(250, '#e9cf95');
-  ring(240, '#8c2f2a');
+  ring(302, '#e9cf95');
+  ring(292, '#5c1719');
   for (let i = 0; i < 32; i++) {
     g.save();
     g.rotate((i / 32) * Math.PI * 2);
-    g.fillStyle = i % 2 ? '#e9cf95' : '#d98f36';
+    // Border stays cream & teal: gold is reserved for the nine countable sun rays
+    g.fillStyle = i % 2 ? '#f1e6cc' : '#2f6d68';
     g.beginPath();
     g.moveTo(0, -478);
     g.lineTo(22, -446);
@@ -900,25 +901,44 @@ function rug(): HTMLCanvasElement {
   for (let i = 0; i < 16; i++) {
     g.save();
     g.rotate((i / 16) * Math.PI * 2);
-    g.fillStyle = '#e0b75c';
+    g.fillStyle = '#cfe0cc';
     g.beginPath();
-    g.ellipse(0, -318, 18, 54, 0, 0, 7);
+    g.ellipse(0, -344, 16, 34, 0, 0, 7);
     g.fill();
-    g.fillStyle = '#b5482f';
+    g.fillStyle = '#3f8377';
     g.beginPath();
-    g.ellipse(0, -318, 8, 34, 0, 0, 7);
+    g.ellipse(0, -344, 7, 20, 0, 0, 7);
     g.fill();
     g.restore();
   }
-  drawSymbol(g, 'sun', 0, 0, 225, '#e9b64c');
-  ring(96, '#8c2f2a');
-  ring(82, '#f0d18a');
   for (let i = 0; i < 9000; i++) {
     const a = Math.random() * 6.28;
     const d = Math.sqrt(Math.random()) * 500;
     g.fillStyle = `rgba(${Math.random() > 0.5 ? '255,240,210' : '30,10,5'},0.07)`;
     g.fillRect(Math.cos(a) * d, Math.sin(a) * d, 3, 2);
   }
+  // Central sun medallion: EXACTLY nine triangular golden rays (the clock's hour, 09).
+  const RAYS = 9;
+  g.lineJoin = 'miter';
+  for (let i = 0; i < RAYS; i++) {
+    g.save();
+    g.rotate((i / RAYS) * Math.PI * 2);
+    g.beginPath();
+    g.moveTo(0, -276);
+    g.lineTo(33, -122);
+    g.lineTo(-33, -122);
+    g.closePath();
+    g.fillStyle = '#ffc935';
+    g.fill();
+    g.strokeStyle = '#2b0809';
+    g.lineWidth = 6;
+    g.stroke();
+    g.restore();
+  }
+  ring(104, '#2b0809');
+  ring(97, '#ffc935');
+  ring(74, '#7d2420');
+  ring(66, '#f6dc94');
   return c;
 }
 
@@ -1046,10 +1066,10 @@ function botanicalMural(): HTMLCanvasElement {
       g.strokeRect(x, y, s, s);
       drawSymbol(g, grid[row][col], x + s / 2, y + s / 2 - 2, 66);
       g.fillStyle = '#4a2c12';
-      g.font = `bold 34px ${SERIF}`;
+      g.font = `bold 40px ${SERIF}`;
       g.textAlign = 'left';
-      g.fillText(`${'ABC'[row]}${col + 1}`, x + 14, y + 42);
-      g.font = `28px ${SERIF}`;
+      g.fillText(`${'ABC'[row]}${col + 1}`, x + 14, y + 46);
+      g.font = `bold 30px ${SERIF}`;
       g.textAlign = 'center';
       g.fillText(names[row][col], x + s / 2, y + s - 18);
     }
@@ -1067,26 +1087,65 @@ function botanicalMural(): HTMLCanvasElement {
   g.fillText('CALL THESE FOUR', 976, 190);
   g.fillText('DIALS THROUGH', 976, 236);
   g.fillText('THE GLASS', 976, 282);
-  const rows = [
-    ['I', 'The emblem directly SOUTH of the Sun.'],
-    ['II', 'The emblem in the exact CENTER of the grid.'],
-    ['III', 'Start at the Key (C2), move 1 East, then 2 North.'],
-    ['IV', 'The corner emblem diagonally opposite the Gear.'],
+  // Four clean icon clues (mirrors WORLD_CLUES.clue_tea_north_mural): no prose to misread.
+  const arrow = (x: number, y: number, angle: number, r = 46): void => {
+    g.save();
+    g.translate(x, y);
+    g.rotate(angle); // 0 = east, +PI/2 = south (canvas y points down)
+    g.lineCap = 'round';
+    g.lineJoin = 'round';
+    g.strokeStyle = '#8a2f14';
+    g.lineWidth = r * 0.26;
+    g.beginPath();
+    g.moveTo(-r * 0.85, 0);
+    g.lineTo(r * 0.75, 0);
+    g.moveTo(r * 0.2, -r * 0.55);
+    g.lineTo(r * 0.8, 0);
+    g.lineTo(r * 0.2, r * 0.55);
+    g.stroke();
+    g.restore();
+  };
+  const centerMark = (x: number, y: number, r = 48): void => {
+    g.strokeStyle = '#8a2f14';
+    g.lineWidth = 11;
+    g.lineCap = 'round';
+    g.beginPath();
+    g.arc(x, y, r, 0, Math.PI * 2);
+    g.moveTo(x - r, y);
+    g.lineTo(x + r, y);
+    g.moveTo(x, y - r);
+    g.lineTo(x, y + r);
+    g.stroke();
+  };
+  const E = 0;
+  const N = -Math.PI / 2;
+  const SO = Math.PI / 2;
+  const SW = Math.PI * 0.75;
+  const rows: { symbol: CipherSymbol | null; arrows: number[] }[] = [
+    { symbol: 'sun', arrows: [SO] },
+    { symbol: null, arrows: [] },
+    { symbol: 'key', arrows: [E, N, N] },
+    { symbol: 'gear', arrows: [SW] },
   ];
-  rows.forEach(([n, t], i) => {
-    const y = 356 + i * 152;
+  rows.forEach(({ symbol, arrows }, i) => {
+    const y = 382 + i * 148;
+    g.fillStyle = 'rgba(255,250,232,0.8)';
+    rounded(g, 958, y - 64, 500, 128, 26);
+    g.fill();
+    g.strokeStyle = '#b5762a';
+    g.lineWidth = 4;
+    g.stroke();
     g.fillStyle = '#b5762a';
     g.beginPath();
-    g.arc(1010, y + 18, 36, 0, 7);
+    g.arc(1012, y, 37, 0, 7);
     g.fill();
     g.fillStyle = '#fff6dd';
-    g.font = `bold 32px ${SERIF}`;
+    g.font = `bold 44px ${SERIF}`;
     g.textAlign = 'center';
-    g.fillText(n, 1010, y + 29);
-    g.textAlign = 'left';
-    g.fillStyle = '#3d2410';
-    g.font = `34px ${SERIF}`;
-    wrapText(g, t, 350).forEach((line, k) => g.fillText(line, 1064, y + 8 + k * 42));
+    g.fillText(`${i + 1}`, 1012, y + 15);
+    if (symbol) drawSymbol(g, symbol, 1114, y, 48);
+    else centerMark(1114, y);
+    arrows.forEach((a, k) => arrow(1222 + k * 92, y, a, 40));
   });
   return c;
 }
@@ -1386,6 +1445,46 @@ export function makeSymbolTexture(s: CipherSymbol): THREE.CanvasTexture {
   g.lineWidth = 10;
   g.stroke();
   drawSymbol(g, s, 128, 128, 84);
+  return toTexture(c);
+}
+
+/** Stopped pocket watch: snapped hour hand, blued minute hand jammed at :35. */
+export function makePocketWatchTexture(): THREE.CanvasTexture {
+  const { c, g } = canvas(256, 256);
+  g.fillStyle = '#fbf3dc';
+  g.beginPath();
+  g.arc(128, 128, 127, 0, 7);
+  g.fill();
+  g.translate(128, 128);
+  g.fillStyle = '#3a220e';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.font = `bold 24px ${SERIF}`;
+  for (let i = 0; i < 60; i++) {
+    g.save();
+    g.rotate((i / 60) * Math.PI * 2);
+    g.fillRect(i % 5 ? -1 : -2.5, -120, i % 5 ? 2 : 5, i % 5 ? 8 : 14);
+    g.restore();
+  }
+  ['12', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11'].forEach((n, i) => {
+    const a = (i / 12) * Math.PI * 2;
+    g.fillText(n, Math.sin(a) * 88, -Math.cos(a) * 88);
+  });
+  g.save();
+  g.rotate((35 / 60) * Math.PI * 2);
+  g.fillStyle = '#23408f';
+  g.beginPath();
+  g.moveTo(-6, 20);
+  g.lineTo(-4, -70);
+  g.lineTo(0, -110);
+  g.lineTo(4, -70);
+  g.lineTo(6, 20);
+  g.fill();
+  g.restore();
+  g.fillStyle = '#8a5f28';
+  g.beginPath();
+  g.arc(0, 0, 11, 0, 7);
+  g.fill();
   return toTexture(c);
 }
 

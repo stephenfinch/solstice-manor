@@ -14,13 +14,16 @@ import type {
   CipherSymbol,
   CoopPing,
   DoorId,
+  DroppedItem,
   HarpColor,
+  HatStyle,
   ItemId,
+  PlayerAppearance,
   PlayerInfo,
   WorldPuzzleStates,
   WorldState,
 } from '../shared/types.js';
-import { FLOOR_PLATES, OBSERVATORY_DECK, SKYLIFT_RAMP } from '../shared/worldLayout.js';
+import { FLOOR_PLATES, isLineOfSightBlocked, OBSERVATORY_DECK, SKYLIFT_RAMP } from '../shared/worldLayout.js';
 import {
   getTextures,
   HARP_HEX,
@@ -28,6 +31,7 @@ import {
   makeNameTexture,
   makeNumberRing,
   makePlaqueTexture,
+  makePocketWatchTexture,
   makeSymbolTexture,
   UV_FRAME_SIZES,
 } from './textures.js';
@@ -52,6 +56,10 @@ export interface InteractableObject {
 export interface BuiltWorld {
   scene: THREE.Scene;
   interactables: InteractableObject[];
+  /** Increments whenever entries are added to / removed from `interactables`. */
+  interactablesVersion: number;
+  /** True while UV frame `index` still glows (live phosphorescent charge > 0.20). */
+  isUvFrameGlowing: (index: number) => boolean;
   uvFrames: {
     index: number;
     mesh: THREE.Mesh;
@@ -788,10 +796,19 @@ interface Ctx {
   ambient: ((t: number, dt: number, camera: THREE.Camera) => void)[];
   anchors: LightAnchor[];
   uvFrames: BuiltWorld['uvFrames'];
+  /** Live phosphorescent charge (0..1) of each UV frame. */
+  uvCharge: number[];
   uv: { camera: THREE.Camera | null; enabled: boolean };
+  /** Local player's id, refreshed on every `updateFromState`. */
+  myId: string;
+  /** Call after mutating `interactables` outside of the initial build. */
+  touchInteractables: () => void;
   reg: (o: RegOpts, x: number, y: number, z: number, w: number, h: number, d: number, ry?: number) => THREE.Mesh;
   light: (x: number, y: number, z: number, color: number, intensity: number, distance: number, flicker?: number) => LightAnchor;
 }
+
+/** Minimum live charge for a UV frame to count as glowing / readable. */
+const UV_GLOW_MIN = 0.2;
 
 const PROXY_MAT = new THREE.MeshBasicMaterial({ visible: false });
 
@@ -807,6 +824,84 @@ function solvedTag(s: WorldState, id: keyof WorldState['solvedPuzzles'], label: 
 
 function clueLabel(id: string): string {
   return `Read: ${WORLD_CLUES[id]?.title ?? 'Plaque'}`;
+}
+
+// ------------------------------------------------------------
+// Interactive prop helpers (state.props[propId])
+// ------------------------------------------------------------
+/** Like `c.reg`, but the hitbox rides along with a moving parent group (coordinates are parent-local). */
+function regOn(c: Ctx, parent: THREE.Object3D, o: RegOpts, x: number, y: number, z: number, w: number, h: number, d: number): THREE.Mesh {
+  const mesh = c.reg(o, x, y, z, w, h, d);
+  parent.add(mesh);
+  parent.updateWorldMatrix(true, true);
+  return mesh;
+}
+
+/** True on the frame a counter prop increments (never on first sync, so late joiners don't replay it). */
+function bumpWatcher(propId: string): (f: Frame) => boolean {
+  let last: number | null = null;
+  return (f) => {
+    const n = Number(f.state.props[propId]) || 0;
+    const prev = last;
+    last = n;
+    return prev !== null && n > prev;
+  };
+}
+
+function toggleLabel(propId: string, closed: string, open: string): (s: WorldState) => string {
+  return (s) => (s.props[propId] ? open : closed);
+}
+
+const propOn = (propId: string) => (s: WorldState): boolean => Boolean(s.props[propId]);
+
+/** Dovetailed drawer: origin at the bottom-centre of the front panel, tray runs toward -Z. */
+function drawerBox(k: Kit, M: Mats, w: number, h: number, d: number, lining: THREE.Material): void {
+  k.box(M.walnut, w, h, 0.03, 0, 0, 0);
+  k.box(M.brassDark, w - 0.1, 0.012, 0.012, 0, 0.03, 0.018);
+  k.box(M.brassDark, w - 0.1, 0.012, 0.012, 0, h - 0.042, 0.018);
+  for (const s of [-1, 1]) {
+    k.box(M.walnutRed, 0.02, h * 0.6, d, s * (w / 2 - 0.04), 0.02, -d / 2 - 0.015);
+    k.put(new THREE.CylinderGeometry(0.018, 0.026, 0.04, 12), M.brass, s * w * 0.27, h / 2, 0.032, Math.PI / 2);
+    k.sph(M.brass, 0.026, s * w * 0.27, h / 2, 0.058, 1, 1, 0.8, 10);
+  }
+  k.box(M.walnutRed, w - 0.08, 0.018, d, 0, 0.02, -d / 2 - 0.015);
+  k.box(M.walnutRed, w - 0.08, h * 0.6, 0.018, 0, 0.02, -d - 0.006);
+  k.box(lining, w - 0.12, 0.008, d - 0.03, 0, 0.038, -d / 2 - 0.015);
+}
+
+/** Pooled soft steam puffs; returns a trigger. */
+function steamBurst(
+  c: Ctx,
+  x: number,
+  y: number,
+  z: number,
+  o: { n?: number; size?: number; rise?: number; spread?: number; life?: number; gap?: number } = {},
+): () => void {
+  const { n = 9, size = 0.5, rise = 0.9, spread = 0.16, life = 1.7, gap = 0.11 } = o;
+  const puffs = Array.from({ length: n }, (_, i) => {
+    const mat = new THREE.SpriteMaterial({ map: c.M.T.glow, color: 0xffffff, transparent: true, opacity: 0, depthWrite: false, fog: false });
+    const s = noRay(new THREE.Sprite(mat));
+    s.visible = false;
+    c.scene.add(s);
+    return { s, mat, age: life, a: i * 2.399 };
+  });
+  c.updaters.push((f) => {
+    for (const p of puffs) {
+      if (p.age >= life) {
+        p.s.visible = false;
+        continue;
+      }
+      p.age += f.dt;
+      const u = p.age / life;
+      p.s.visible = u > 0 && u < 1;
+      if (!p.s.visible) continue;
+      const out = spread * u * (1 + u);
+      p.s.position.set(x + Math.cos(p.a) * out, y + rise * u, z + Math.sin(p.a) * out);
+      p.s.scale.setScalar(size * (0.35 + u * 0.9));
+      p.mat.opacity = 0.8 * Math.min(1, u * 6) * (1 - u);
+    }
+  });
+  return () => puffs.forEach((p, i) => (p.age = -i * gap));
 }
 
 // ------------------------------------------------------------
@@ -1817,7 +1912,7 @@ function buildFoyer(c: Ctx): void {
     0.45,
     0.55,
   );
-  pottedPlant(c, k, -7.1, 14.5, 1, 3);
+  pottedPlant(c, k, -7.1, 8.5, 1, 3);
   pottedPlant(c, k, 7.1, 11.7, 1.05, 4);
   pottedPlant(c, k, 7.1, 17.1, 1.1, 8);
   pottedPlant(c, k, -7.1, 6.9, 1, 12);
@@ -1933,6 +2028,113 @@ function buildFoyer(c: Ctx): void {
 
   oracleBooth(c, 'foyer', -6.5, 16.5, Math.PI * 0.75, 'open_oracle');
   pedestal(c, k, -5.9, 9.2, 1.0);
+  buildCredenza(c, k);
+}
+
+/** Walnut credenza on the west foyer wall, south of the Study doorway (Z 10.5..13.5 stays clear). */
+const CREDENZA = { x: -7.3, z: 14.7 };
+
+function buildCredenza(c: Ctx, k: Kit): void {
+  const { M, scene } = c;
+  const ck = k.at(CREDENZA.x, 0, CREDENZA.z, Math.PI / 2);
+  // Hollow carcass so the open drawers read as real drawers
+  ck.box(M.walnut, 1.42, 0.1, 0.5);
+  for (const s of [-1, 1]) {
+    ck.box(M.walnutRed, 0.08, 0.8, 0.56, s * 0.71, 0.1, 0);
+    ck.cyl(M.brass, 0.03, 0.03, 0.78, s * 0.71, 0.11, 0.285, 10);
+  }
+  ck.box(M.walnutRed, 1.34, 0.8, 0.03, 0, 0.1, -0.262);
+  ck.box(M.walnutRed, 1.34, 0.04, 0.52, 0, 0.1, 0);
+  ck.box(M.walnutRed, 1.34, 0.04, 0.52, 0, 0.505, 0);
+  ck.box(M.walnutRed, 1.34, 0.04, 0.52, 0, 0.86, 0);
+  ck.box(M.marble, 1.6, 0.06, 0.62, 0, 0.9, 0);
+  ck.box(M.brass, 1.5, 0.02, 0.57, 0, 0.888, 0);
+  // Dressing on top: posy & a short stack of books
+  ck.put(lathe([[0.01, 0], [0.09, 0], [0.12, 0.1], [0.07, 0.2], [0.09, 0.24], [0.01, 0.24]], 18), M.cream, -0.52, 0.96, -0.02);
+  const posy = k.at(CREDENZA.x, 1.16, CREDENZA.z, Math.PI / 2);
+  flowerClump(c, posy, -0.52, 0.02, -0.02, 9, 0.24, 611);
+  for (let i = 0; i < 3; i++) ck.box([M.velvetTeal, M.velvetRed, M.copper][i], 0.32 - i * 0.03, 0.05, 0.22, -0.08, 0.96 + i * 0.05, -0.08, 0.2 - i * 0.25);
+
+  const root = group(scene, CREDENZA.x, 0, CREDENZA.z, Math.PI / 2);
+  const FRONT = 0.277;
+  const mkDrawer = (propId: string, y: number, h: number, open: string, close: string): THREE.Group => {
+    const g = group(root, 0, y, FRONT, 0, (d) => drawerBox(d, M, 1.31, h, 0.47, propId === 'prop_foyer_drawer_1' ? M.velvetRed : M.velvetTeal));
+    c.updaters.push((f) => (g.position.z = damp(g.position.z, FRONT + (f.state.props[propId] ? 0.36 : 0), 7, f.dt)));
+    regOn(c, g, { id: propId, label: open, actionType: 'direct', maxDistance: 3.2, getLabel: toggleLabel(propId, open, close) }, 0, h / 2, 0.02, 1.31, h, 0.1);
+    return g;
+  };
+  // Fronts overlay the rails slightly so nothing inside peeks out while closed.
+  // Upper drawer: the stopped pocket watch on a velvet cushion
+  const d1 = mkDrawer('prop_foyer_drawer_1', 0.535, 0.33, 'Open Credenza Drawer', 'Close Credenza Drawer');
+  const watch = group(d1, 0, 0.14, -0.21, 0, (g) => {
+    g.sph(M.cream, 0.21, 0, -0.04, 0, 1, 0.36, 0.72, 20);
+    g.torus(M.brass, 0.05, 0.012, 0, 0.075, -0.145, -Math.PI / 2 + 0.3);
+    g.put(new THREE.CylinderGeometry(0.02, 0.02, 0.05, 10), M.brass, 0, 0.065, -0.115, -Math.PI / 2 + 0.3);
+    const w = g.at(0, 0.035, 0, 0, 0.3);
+    w.cyl(M.brass, 0.115, 0.1, 0.035, 0, 0, 0, 32);
+    w.torus(M.brass, 0.112, 0.014, 0, 0.036, 0, Math.PI / 2);
+    w.disc(paintedMat(makePocketWatchTexture(), 0.4), 0.104, 0, 0.0375, 0, 40);
+    for (let i = 0; i < 14; i++) g.torus(M.brassDark, 0.014, 0.004, 0.13 + i * 0.02, -0.02 - Math.min(i, 3) * 0.006, -0.1 + Math.sin(i * 0.6) * 0.05, i % 2 ? Math.PI / 2 : 0, 0.4, 0, 10);
+  });
+  watch.name = 'pocket_watch';
+  regOn(
+    c,
+    d1,
+    {
+      id: 'clue_foyer_pocket_watch',
+      label: clueLabel('clue_foyer_pocket_watch'),
+      actionType: 'clue',
+      clueId: 'clue_foyer_pocket_watch',
+      maxDistance: 3.2,
+      enabled: propOn('prop_foyer_drawer_1'),
+    },
+    0,
+    0.2,
+    -0.2,
+    0.5,
+    0.28,
+    0.3,
+  );
+  // Lower drawer: folded blueprints & spare watch springs
+  const d2 = mkDrawer('prop_foyer_drawer_2', 0.13, 0.385, 'Open Lower Drawer', 'Close Lower Drawer');
+  group(d2, 0, 0.046, -0.19, 0, (g) => {
+    const blue = M.std({ color: 0x2c6396, roughness: 0.85 });
+    for (let i = 0; i < 4; i++) g.box(i % 2 ? M.paper : blue, 0.4 - i * 0.03, 0.014, 0.26, -0.34, i * 0.015, 0, 0.05 * (i - 1.5));
+    for (let i = 0; i < 2; i++) {
+      g.put(new THREE.CylinderGeometry(0.032, 0.032, 0.36, 14), blue, 0.08, 0.034, -0.05 + i * 0.09, 0, 0, Math.PI / 2);
+      g.torus(M.brass, 0.034, 0.007, 0.08, 0.034, -0.05 + i * 0.09, 0, Math.PI / 2, 0, 16);
+    }
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 5; j++) g.torus(M.silver, 0.034, 0.005, 0.36 + i * 0.1, 0.012 + j * 0.012, (i % 2) * 0.1 - 0.05, Math.PI / 2, 0, 0, 18);
+    g.put(gearGeo(14, 0.05, 0.012), M.brass, 0.5, 0.01, 0.1, -Math.PI / 2);
+  });
+
+  // Brass service bell
+  const bell = group(root, 0.42, 0.96, 0.06, 0, (g) => {
+    g.cyl(M.walnut, 0.13, 0.14, 0.025, 0, 0, 0, 28);
+    g.cyl(M.brassDark, 0.105, 0.115, 0.02, 0, 0.025, 0, 28);
+  });
+  const dome = group(bell, 0, 0.045, 0, 0, (g) => g.put(new THREE.SphereGeometry(0.1, 28, 12, 0, TAU, 0, Math.PI / 2), M.brass, 0, 0, 0, 0, 0, 0, 1, 0.85, 1));
+  const plunger = group(bell, 0, 0.13, 0, 0, (g) => {
+    g.cyl(M.brass, 0.01, 0.01, 0.04, 0, 0, 0, 10);
+    g.sph(M.brass, 0.022, 0, 0.045, 0, 1, 0.7, 1, 12);
+  });
+  const chime = glowSprite(M, 0xffe09a, 0.6, 0);
+  chime.position.set(0, 0.12, 0);
+  bell.add(chime);
+  const rung = bumpWatcher('prop_foyer_bell');
+  let bellAge = 9;
+  c.updaters.push((f) => {
+    if (rung(f)) bellAge = 0;
+    bellAge = Math.min(9, bellAge + f.dt);
+    const env = Math.exp(-bellAge * 5);
+    const q = env * Math.cos(bellAge * 28);
+    plunger.position.y = 0.13 - 0.032 * Math.max(-0.35, q);
+    dome.scale.set(1 + q * 0.05, 1 - q * 0.12, 1 + q * 0.05);
+    bell.rotation.z = env * Math.sin(bellAge * 34) * 0.05;
+    (chime.material as THREE.SpriteMaterial).opacity = env * 0.7;
+    chime.scale.setScalar(0.4 + (1 - env) * 0.5);
+  });
+  regOn(c, root, { id: 'prop_foyer_bell', label: 'Ring Brass Desk Bell', actionType: 'direct', maxDistance: 3.2 }, 0.42, 1.08, 0.06, 0.34, 0.27, 0.34);
 }
 
 function armchair(k: Kit, M: Mats, cloth: THREE.Material): void {
@@ -2019,6 +2221,20 @@ function buildTea(c: Ctx): void {
     f.torus(M.brass, 0.2, 0.02, 0, 0, 0.35);
     f.put(new THREE.CylinderGeometry(0.08, 0.08, 0.2, 18), M.copper, 0, 0, 0.06, Math.PI / 2);
   }
+  const tubeGlow = M.glow(0xffd27a, 0);
+  const tubeRings = [-1, 1].map((s) => group(scene, 9.1, 1.5, 11 + s * 0.36, 0, (g) => g.torus(tubeGlow, 0.165, 0.014)));
+  const whistled = bumpWatcher('prop_speaking_tube');
+  let tubePulse = 0;
+  c.updaters.push((f) => {
+    if (whistled(f)) tubePulse = 1;
+    tubePulse = damp(tubePulse, 0, 1.6, f.dt);
+    tubeGlow.emissiveIntensity = tubePulse * 2.6;
+    tubeRings.forEach((g, i) => {
+      g.visible = tubePulse > 0.02;
+      g.scale.setScalar(1 + Math.sin(f.t * 22 + i) * 0.08 * tubePulse);
+    });
+  });
+  c.reg({ id: 'prop_speaking_tube', label: 'Whistle Through Speaking Tube', actionType: 'direct', maxDistance: 3.0 }, 9.1, 1.5, 11, 0.5, 0.5, 0.84);
   // Low decorative planter under the clear glass window (leaves clear partner sightline above waist!)
   gk.box(M.walnutRed, 4.2, 0.42, 0.32, 11.1, 0, 10.6);
   gk.box(M.soil, 4.1, 0.04, 0.26, 11.1, 0.41, 10.6);
@@ -2181,12 +2397,50 @@ function buildTea(c: Ctx): void {
 
   // --- Supply cabinet (south wall) ---
   const sk = k.at(11.6, 0, 17.35, Math.PI);
-  sk.box(M.walnutRed, 2.2, 1.0, 0.56);
+  // Hollow carcass behind four hinged leaves
+  sk.box(M.walnutRed, 2.2, 0.1, 0.56);
+  sk.box(M.walnutRed, 2.2, 0.08, 0.56, 0, 0.92, 0);
+  sk.box(M.walnutRed, 2.2, 0.82, 0.04, 0, 0.1, -0.26);
+  for (const x of [-1.06, 0, 1.06]) sk.box(M.walnutRed, 0.08, 0.82, 0.54, x, 0.1, 0);
+  sk.box(M.walnut, 2.04, 0.03, 0.44, 0, 0.5, -0.02);
   sk.box(M.marble, 2.3, 0.06, 0.64, 0, 1.0, 0.02);
-  for (const x of [-0.55, 0.55]) {
-    sk.box(M.walnut, 0.9, 0.7, 0.04, x, 0.15, 0.28);
-    sk.sph(M.brass, 0.03, x * 0.3, 0.5, 0.32);
+  const cabRand = makeRng(88);
+  for (let i = 0; i < 10; i++) {
+    const x = -0.9 + (i % 5) * 0.2 + (i % 5 > 1 ? 0.62 : 0);
+    const y = i < 5 ? 0.1 : 0.53;
+    const h = 0.16 + cabRand() * 0.12;
+    const tin = [M.petalGold, M.velvetTeal, M.copper, M.petalPink, M.verdigris][i % 5];
+    if (i % 4 === 3) sk.put(lathe([[0.01, 0], [0.07, 0], [0.1, 0.06], [0.09, 0.13], [0.03, 0.17], [0.01, 0.18]], 16), M.cream, x, y, -0.02);
+    else {
+      sk.cyl(tin, 0.075, 0.075, h, x, y, -0.02, 14);
+      sk.cyl(M.brass, 0.08, 0.08, 0.025, x, y + h, -0.02, 14);
+    }
   }
+  const cab = group(scene, 11.6, 0, 17.35, Math.PI);
+  const leaves = ([[-1.02, 1], [-0.04, -1], [0.04, 1], [1.02, -1]] as const).map(([x, dir]) => ({
+    dir,
+    g: group(cab, x, 0.11, 0.285, 0, (g) => {
+      g.box(M.walnut, 0.48, 0.8, 0.03, dir * 0.243, 0, 0);
+      g.box(M.walnutRed, 0.34, 0.6, 0.012, dir * 0.243, 0.1, 0.02);
+      g.sph(M.brass, 0.026, dir * 0.43, 0.42, 0.035, 1, 1, 1, 10);
+      for (const y of [0.12, 0.64]) g.cyl(M.brass, 0.014, 0.014, 0.08, 0, y, 0.016, 8);
+    }),
+  }));
+  let cabAmt = 0;
+  c.updaters.push((f) => {
+    cabAmt = damp(cabAmt, f.state.props.prop_tea_cabinet ? 1 : 0, 5, f.dt);
+    // outer leaves fold wide, centre leaves stop just short of each other
+    leaves.forEach(({ g, dir }, i) => (g.rotation.y = -dir * cabAmt * (i === 0 || i === 3 ? 1.95 : 1.48)));
+  });
+  c.reg(
+    { id: 'prop_tea_cabinet', label: 'Open Tea Cabinet', actionType: 'direct', maxDistance: 3.2, getLabel: toggleLabel('prop_tea_cabinet', 'Open Tea Cabinet', 'Close Tea Cabinet') },
+    11.6,
+    0.5,
+    17.05,
+    2.1,
+    0.8,
+    0.12,
+  );
   sk.box(M.walnutRed, 2.2, 0.06, 0.34, 0, 2.0, -0.1);
   sk.box(M.walnutRed, 2.2, 0.06, 0.34, 0, 2.5, -0.1);
   sk.box(M.walnutRed, 0.06, 1.6, 0.34, -1.1, 1.06, -0.1);
@@ -2202,7 +2456,29 @@ function buildTea(c: Ctx): void {
   tk.cyl(M.marble, 0.5, 0.5, 0.05, 0, 0.74, 0, 30);
   tk.cyl(M.iron, 0.04, 0.05, 0.74, 0, 0, 0, 10);
   tk.cyl(M.iron, 0.28, 0.32, 0.04, 0, 0, 0, 20);
-  tk.put(lathe([[0.01, 0], [0.12, 0], [0.18, 0.1], [0.16, 0.2], [0.06, 0.26], [0.01, 0.27]], 20), M.cream, 0, 0.79, 0);
+  // Whistling copper kettle on a little brass trivet
+  tk.cyl(M.brassDark, 0.17, 0.18, 0.02, 0, 0.79, -0.06, 24);
+  const kettle = group(scene, 9.5, 0.81, 16.94, 0, (g) => {
+    g.put(lathe([[0.01, 0], [0.16, 0], [0.2, 0.05], [0.19, 0.13], [0.12, 0.2], [0.07, 0.22], [0.01, 0.22]], 28), M.copper);
+    g.cyl(M.brass, 0.07, 0.075, 0.02, 0, 0.215, 0, 20);
+    g.sph(M.brass, 0.022, 0, 0.255, 0, 1, 1, 1, 10);
+    g.rod(M.copper, 0.028, [0.14, 0.09, 0], [0.27, 0.21, 0], 12);
+    g.torus(M.brass, 0.028, 0.008, 0.27, 0.21, 0, Math.PI / 2, 0, -0.8, 14);
+    g.torus(M.brassDark, 0.13, 0.013, 0, 0.21, 0, 0, 0, 0, 24, Math.PI);
+    g.put(new THREE.CylinderGeometry(0.02, 0.02, 0.12, 10), M.ebony, 0, 0.34, 0, 0, 0, Math.PI / 2);
+  });
+  const puffKettle = steamBurst(c, 9.78, 1.04, 16.94, { n: 10, size: 0.34, rise: 0.75, spread: 0.1, life: 1.6 });
+  const tapped = bumpWatcher('prop_tea_kettle');
+  let kettleAge = 9;
+  c.updaters.push((f) => {
+    if (tapped(f)) {
+      kettleAge = 0;
+      puffKettle();
+    }
+    kettleAge = Math.min(9, kettleAge + f.dt);
+    kettle.rotation.z = Math.sin(kettleAge * 40) * 0.04 * Math.exp(-kettleAge * 2.4);
+  });
+  c.reg({ id: 'prop_tea_kettle', label: 'Tap Copper Tea Kettle', actionType: 'direct', maxDistance: 3.2 }, 9.54, 1.0, 16.94, 0.6, 0.44, 0.48);
   for (const [x, z] of [[0.28, 0.1], [-0.26, 0.16]] as const) tk.cyl(M.cream, 0.07, 0.045, 0.07, x, 0.79, z, 14);
 }
 
@@ -2252,13 +2528,117 @@ function buildStudy(c: Ctx): void {
   }
   dk.cyl(M.brass, 0.1, 0.12, 0.03, -0.9, 0.88, -0.2, 18);
   dk.cyl(M.brass, 0.018, 0.018, 0.34, -0.9, 0.9, -0.2, 8);
-  dk.put(new THREE.CylinderGeometry(0.1, 0.2, 0.16, 18, 1, true), M.lampGlow, -0.9, 1.28, -0.2);
+  const lampMat = M.glow(0xffd08a, 2.2);
+  lampMat.side = THREE.DoubleSide;
+  group(scene, -11.2, 1.28, 6.8, 0, (g) => g.put(new THREE.CylinderGeometry(0.1, 0.2, 0.16, 18, 1, true), lampMat));
+  const lampHalo = glowSprite(M, 0xffc98a, 1.3, 0.4);
+  lampHalo.position.set(-11.2, 1.26, 6.85);
+  scene.add(lampHalo);
+  c.reg({ id: 'prop_study_lamp', label: 'Switch Desk Lamp', actionType: 'direct', maxDistance: 3.4 }, -11.2, 1.14, 6.8, 0.46, 0.5, 0.46);
   const note = dk.at(0.15, 0.91, 0.1, 0, -Math.PI / 2 + 0.28);
   note.box(M.walnut, 0.86, 0.66, 0.03, 0, -0.33, -0.02);
   note.panel(paintedMat(makePlaqueTexture(WORLD_CLUES.clue_organ_rules.title, WORLD_CLUES.clue_organ_rules.body, { w: 820, h: 620 })), 0.8, 0.6, 0, 0, 0.01);
   for (let i = 0; i < 3; i++) dk.box([M.velvetRed, M.velvetTeal, M.copper][i], 0.36, 0.06, 0.26, 0.85, 0.88 + i * 0.06, -0.2, i * 0.3);
-  c.reg({ id: 'clue_organ_rules', label: clueLabel('clue_organ_rules'), actionType: 'clue', clueId: 'clue_organ_rules', maxDistance: 3.4 }, -10.2, 1.0, 7.1, 1.6, 0.5, 1.0);
-  c.light(-11.2, 1.9, 8.2, 0xffc98a, 9, 7);
+  c.reg({ id: 'clue_organ_rules', label: clueLabel('clue_organ_rules'), actionType: 'clue', clueId: 'clue_organ_rules', maxDistance: 3.4 }, -10.15, 0.99, 7.1, 0.95, 0.22, 0.78);
+  const lampLight = c.light(-11.2, 1.9, 8.2, 0xffc98a, 9, 7);
+  let lampAmt = 1;
+  c.updaters.push((f) => {
+    lampAmt = damp(lampAmt, f.state.props.prop_study_lamp !== false ? 1 : 0, 12, f.dt);
+    lampMat.emissiveIntensity = 0.04 + lampAmt * 2.16;
+    (lampHalo.material as THREE.SpriteMaterial).opacity = lampAmt * 0.4;
+    lampLight.gain = lampAmt;
+  });
+  // Knee-hole desk drawer with the rolled Sundial Hour Sketch
+  const deskG = group(scene, -10.3, 0, 7.0, 0);
+  const deskDrawer = group(deskG, 0, 0.63, 0.46, 0, (g) => drawerBox(g, M, 1.04, 0.16, 0.44, M.velvetTeal));
+  group(deskDrawer, 0, 0.05, -0.19, 0, (g) => {
+    g.box(M.paper, 0.4, 0.004, 0.17, 0, 0.0, 0.02, 0.06);
+    g.put(new THREE.CircleGeometry(0.055, 24), M.petalGold, 0, 0.006, 0.03, -Math.PI / 2);
+    g.put(new THREE.CylinderGeometry(0.026, 0.026, 0.42, 14), M.paper, 0.005, 0.026, -0.075, 0, 0.06, Math.PI / 2);
+    g.torus(M.velvetRed, 0.028, 0.007, 0.005, 0.026, -0.075, 0, Math.PI / 2, 0, 16);
+    g.put(new THREE.CylinderGeometry(0.018, 0.018, 0.14, 8), M.brass, 0.36, 0.016, 0.05, 0, 0.5, Math.PI / 2);
+  });
+  c.updaters.push((f) => (deskDrawer.position.z = damp(deskDrawer.position.z, 0.46 + (f.state.props.prop_study_drawer ? 0.36 : 0), 7, f.dt)));
+  regOn(
+    c,
+    deskDrawer,
+    { id: 'prop_study_drawer', label: 'Open Desk Drawer', actionType: 'direct', maxDistance: 3.2, getLabel: toggleLabel('prop_study_drawer', 'Open Desk Drawer', 'Close Desk Drawer') },
+    0,
+    0.08,
+    0.02,
+    1.04,
+    0.18,
+    0.1,
+  );
+  regOn(
+    c,
+    deskDrawer,
+    {
+      id: 'clue_study_drawer_sketch',
+      label: clueLabel('clue_study_drawer_sketch'),
+      actionType: 'clue',
+      clueId: 'clue_study_drawer_sketch',
+      maxDistance: 3.2,
+      enabled: propOn('prop_study_drawer'),
+    },
+    0,
+    0.125,
+    -0.19,
+    0.56,
+    0.2,
+    0.29,
+  );
+
+  // Crimson Almanac: slides out of the east bookcase on a brass rail and turns its hollow cover to the reader
+  const almanac = group(scene, -13.6, 1.53, 5.69, 0, (g) => g.rod(M.brass, 0.012, [0, 0, -0.33], [0, 0, 0], 8));
+  const almanacBook = group(almanac, 0, 0, 0, 0, (g) => {
+    const crimson = M.std({ color: 0xa3172b, roughness: 0.6, emissive: 0x4a0610, emissiveIntensity: 0.35 });
+    g.box(crimson, 0.11, 0.42, 0.3, 0, -0.21, 0);
+    g.box(M.paper, 0.085, 0.4, 0.02, 0, -0.2, -0.145);
+    for (const y of [-0.17, -0.1, 0.1, 0.17]) g.box(M.brass, 0.118, 0.014, 0.304, 0, y - 0.007, 0.002);
+    g.put(new THREE.ExtrudeGeometry(starShape(8, 0.042, 0.022), { depth: 0.006, bevelEnabled: false }), M.brass, 0, 0, 0.15);
+  });
+  const almanacPage = group(almanacBook, -0.0565, 0, 0, -Math.PI / 2, (g) => {
+    g.box(M.ebony, 0.24, 0.36, 0.004, 0, -0.18, 0);
+    g.panel(paintedMat(makePlaqueTexture('ALMANAC', 'DAY  X', { w: 256, h: 384 }), 0.5), 0.2, 0.32, 0, 0, 0.005);
+    for (const s of [-1, 1]) g.box(M.brass, 0.012, 0.36, 0.008, s * 0.115, -0.18, 0.003);
+  });
+  let bookAmt = 0;
+  c.updaters.push((f) => {
+    bookAmt = damp(bookAmt, f.state.props.prop_study_book ? 1 : 0, 5, f.dt);
+    // slide clear of the shelf first, then swing
+    const slide = smooth(0, 0.5, bookAmt);
+    const swing = smooth(0.4, 1, bookAmt);
+    almanac.position.z = 5.69 + slide * 0.34;
+    almanacBook.rotation.y = (swing * Math.PI) / 2;
+    almanacBook.rotation.z = (1 - slide) * 0.11;
+    almanacPage.visible = bookAmt > 0.3;
+  });
+  c.reg(
+    { id: 'prop_study_book', label: 'Pull Crimson Almanac', actionType: 'direct', maxDistance: 3.2, getLabel: toggleLabel('prop_study_book', 'Pull Crimson Almanac', 'Push Crimson Almanac') },
+    -13.6,
+    1.53,
+    5.96,
+    0.46,
+    0.56,
+    0.2,
+  );
+  c.reg(
+    {
+      id: 'clue_study_secret_book',
+      label: clueLabel('clue_study_secret_book'),
+      actionType: 'clue',
+      clueId: 'clue_study_secret_book',
+      maxDistance: 3.2,
+      enabled: propOn('prop_study_book'),
+    },
+    -13.6,
+    1.53,
+    6.1,
+    0.24,
+    0.36,
+    0.1,
+  );
   // Alchemy glassware on shelf
   k.box(M.walnutRed, 2.2, 0.06, 0.32, -10.3, 1.9, 6.54);
   [0xff8ab0, 0x7fe0ff, 0xb9ff7a, 0xffd25a, 0xc79bff].forEach((col, i) => {
@@ -2279,7 +2659,14 @@ function buildStudy(c: Ctx): void {
   });
   globe.rotation.z = 0.4;
   k.torus(M.brass, 0.42, 0.02, -18.6, 1.05, 16.6, 0, 0, 0.4);
-  c.ambient.push((t) => (globe.rotation.y = t * 0.12));
+  const spun = bumpWatcher('prop_study_globe');
+  let globeVel = 0.12;
+  c.updaters.push((f) => {
+    if (spun(f)) globeVel = Math.min(16, globeVel + 9);
+    globeVel = damp(globeVel, 0.12, 0.85, f.dt);
+    globe.rotation.y = (globe.rotation.y + globeVel * f.dt) % TAU;
+  });
+  c.reg({ id: 'prop_study_globe', label: 'Spin Celestial Globe', actionType: 'direct', maxDistance: 3.4 }, -18.6, 1.0, 16.6, 0.95, 0.95, 0.95);
 
   // Chandelier of glass orbs
   k.cyl(M.brass, 0.02, 0.02, 0.8, -14, 3.7, 11.8, 6);
@@ -2311,38 +2698,76 @@ function buildStudy(c: Ctx): void {
       map: M.T.uvGlow[i],
       emissiveMap: M.T.uvGlow[i],
       emissive: 0xffffff,
-      emissiveIntensity: 1.25,
+      emissiveIntensity: 0.8,
       roughness: 0.8,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
     });
+    const nx = Math.sin(ry);
+    const nz = Math.cos(ry);
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), normalMat);
-    mesh.position.set(x, y, z).add(_v.set(Math.sin(ry) * 0.02, 0, Math.cos(ry) * 0.02));
+    mesh.position.set(x + nx * 0.02, y, z + nz * 0.02);
     mesh.rotation.y = ry;
     mesh.receiveShadow = true;
     scene.add(mesh);
+    // Phosphorescent ink: a transparent overlay floating just proud of the parchment
+    const ink = noRay(new THREE.Mesh(new THREE.PlaneGeometry(w, h), uvMat));
+    ink.position.set(mesh.position.x + nx * 0.006, y, mesh.position.z + nz * 0.006);
+    ink.rotation.y = ry;
+    ink.renderOrder = 1;
+    ink.visible = false;
+    scene.add(ink);
     const halo = glowSprite(M, 0x8f6bff, Math.max(w, h) * 2, 0);
-    halo.position.copy(mesh.position).add(_v.set(Math.sin(ry) * 0.12, 0, Math.cos(ry) * 0.12));
+    halo.position.copy(mesh.position).add(_v.set(nx * 0.12, 0, nz * 0.12));
     scene.add(halo);
     const worldPos = mesh.position.clone();
     c.uvFrames.push({ index: i, mesh, uvMat, normalMat, worldPos });
+    c.uvCharge[i] = 0;
+    const eye = new THREE.Vector3();
     const dir = new THREE.Vector3();
     const to = new THREE.Vector3();
-    const litBy = (pos: THREE.Vector3, d: THREE.Vector3): boolean => {
-      to.copy(worldPos).sub(pos);
+    const litBy = (f: Frame): boolean => {
+      to.copy(worldPos).sub(eye);
       const dist = to.length();
-      return dist <= 7 && d.dot(to.normalize()) > 0.72;
+      if (dist > 7.2 || dist < 1e-3) return false;
+      to.divideScalar(dist);
+      return dir.dot(to) > 0.72 && !isLineOfSightBlocked(eye.x, eye.y, eye.z, to.x, to.y, to.z, dist, f.state.doors);
     };
-    let hv = 0;
+    let linger = 0;
     c.updaters.push((f) => {
-      const revealed = f.p.uvRevealedFrames.includes(i);
       let lit = false;
       if (c.uv.enabled && c.uv.camera) {
+        c.uv.camera.getWorldPosition(eye);
         c.uv.camera.getWorldDirection(dir);
-        lit = litBy(c.uv.camera.getWorldPosition(new THREE.Vector3()), dir);
+        lit = litBy(f);
       }
-      mesh.material = revealed || lit ? uvMat : normalMat;
-      uvMat.emissiveIntensity = lit ? 1.6 + Math.sin(f.t * 6) * 0.12 : 1.05 + Math.sin(f.t * 1.7 + i) * 0.12;
-      hv = damp(hv, revealed || lit ? 0.22 : 0, 5, f.dt);
-      (halo.material as THREE.SpriteMaterial).opacity = hv;
+      if (!lit) {
+        for (const partner of Object.values(f.state.players)) {
+          if (partner.id === f.myId || !partner.connected || !partner.transform.uvOn) continue;
+          const tf = partner.transform;
+          const cp = Math.cos(tf.pitch);
+          eye.set(tf.x, tf.y + (tf.crouching ? 1.02 : 1.68), tf.z);
+          dir.set(-Math.sin(tf.yaw) * cp, Math.sin(tf.pitch), -Math.cos(tf.yaw) * cp);
+          if (litBy(f)) {
+            lit = true;
+            break;
+          }
+        }
+      }
+      let charge = c.uvCharge[i];
+      if (lit) {
+        charge = Math.min(1, charge + f.dt * 3.8);
+        linger = 3.4;
+      } else {
+        linger = Math.max(0, linger - f.dt);
+        if (linger <= 0) charge = Math.max(0, charge - f.dt * 0.55);
+      }
+      c.uvCharge[i] = charge;
+      ink.visible = charge > 0;
+      uvMat.opacity = charge;
+      uvMat.emissiveIntensity = 0.8 + charge * 0.9;
+      (halo.material as THREE.SpriteMaterial).opacity = charge * 0.22;
     });
     c.reg(
       {
@@ -2351,7 +2776,7 @@ function buildStudy(c: Ctx): void {
         actionType: 'clue',
         clueId: `clue_uv_frame_${i}`,
         maxDistance: 5,
-        getLabel: (s) => (s.puzzles.uvRevealedFrames.includes(i) ? clueLabel(`clue_uv_frame_${i}`) : null),
+        getLabel: () => (c.uvCharge[i] > UV_GLOW_MIN ? clueLabel(`clue_uv_frame_${i}`) : null),
       },
       x,
       y,
@@ -2605,6 +3030,7 @@ function buildCourtyard(c: Ctx): void {
   }
 
   buildFountain(c, k);
+  buildWindChimes(c, k);
 
   // --- Equinox Sundial ---
   const sx = -6.2;
@@ -2655,9 +3081,106 @@ function buildCourtyard(c: Ctx): void {
   buildLightRelay(c, k);
 }
 
+/** Brass wind-bells on a bracket on the east pier of the north arch (hung above head height). */
+function buildWindChimes(c: Ctx, k: Kit): void {
+  const { M, scene } = c;
+  const x = 6.15;
+  const z = -13.4;
+  k.box(M.brassDark, 0.16, 0.4, 0.04, x, 2.5, -13.68);
+  k.rod(M.brass, 0.02, [x, 2.74, -13.68], [x, 2.74, z], 8);
+  k.rod(M.brass, 0.014, [x, 2.54, -13.68], [x, 2.74, z + 0.1], 8);
+  k.sph(M.brass, 0.032, x, 2.74, z, 1, 1, 1, 10);
+  const hang = group(scene, x, 2.72, z, 0, (g) => {
+    g.rod(M.brass, 0.005, [0, 0, 0], [0, -0.12, 0], 5);
+    g.cyl(M.walnut, 0.16, 0.16, 0.025, 0, -0.145, 0, 24);
+    g.torus(M.brass, 0.16, 0.012, 0, -0.132, 0, Math.PI / 2);
+  });
+  const bells = Array.from({ length: 6 }, (_, i) => {
+    const a = (i / 6) * TAU;
+    const len = 0.42 + i * 0.055;
+    return group(hang, Math.cos(a) * 0.13, -0.145, Math.sin(a) * 0.13, 0, (g) => {
+      g.rod(M.silver, 0.003, [0, 0, 0], [0, -0.07, 0], 4);
+      g.cyl(i % 2 ? M.copper : M.brass, 0.02, 0.02, len, 0, -0.07 - len, 0, 12);
+    });
+  });
+  const clapper = group(hang, 0, -0.145, 0, 0, (g) => {
+    g.rod(M.silver, 0.003, [0, 0, 0], [0, -0.4, 0], 4);
+    g.sph(M.walnutRed, 0.05, 0, -0.42, 0, 1, 0.6, 1, 14);
+  });
+  const chimed = bumpWatcher('prop_courtyard_chimes');
+  let amp = 0;
+  c.updaters.push((f) => {
+    if (chimed(f)) amp = 1;
+    amp = damp(amp, 0, 0.9, f.dt);
+    hang.rotation.z = Math.sin(f.t * 1.1) * 0.015 + Math.sin(f.t * 4.2) * 0.1 * amp;
+    hang.rotation.x = Math.sin(f.t * 0.8 + 1) * 0.012 + Math.cos(f.t * 3.7) * 0.07 * amp;
+    bells.forEach((b, i) => {
+      b.rotation.z = Math.sin(f.t * 1.6 + i) * 0.02 + Math.sin(f.t * 7.5 + i * 1.3) * 0.16 * amp;
+      b.rotation.x = Math.cos(f.t * 6.8 + i * 1.7) * 0.12 * amp;
+    });
+    clapper.rotation.z = Math.sin(f.t * 5.5) * 0.2 * amp;
+    clapper.rotation.x = Math.cos(f.t * 5.1) * 0.2 * amp;
+  });
+  c.reg({ id: 'prop_courtyard_chimes', label: 'Chime Brass Wind-Bells', actionType: 'direct', maxDistance: 3.6 }, x, 2.28, -13.36, 0.56, 1.05, 0.56);
+}
+
 function buildFountain(c: Ctx, k: Kit): void {
   const { M, scene } = c;
   const z = -4;
+  // Engraved brass plaque propped against the south rim (basin radius 2.3 => rim at Z = -1.7)
+  k.box(M.marble, 0.92, 0.56, 0.3, 0, 0, -1.8);
+  plaque(c, k, makePlaqueTexture('FOUR SPOUTS', 'AZIMUTH = 4', { style: 'brass', w: 512, h: 224 }), 0.8, 0.35, 0, 0.45, -1.545, 0, -0.35, M.brass, 0.4);
+  c.reg({ id: 'clue_fountain_rim', label: clueLabel('clue_fountain_rim'), actionType: 'clue', clueId: 'clue_fountain_rim', maxDistance: 3.6 }, 0, 0.46, -1.57, 1.05, 0.56, 0.3);
+
+  // Coin toss: a coin arcs into the basin nearest the viewer and golden ripples spread
+  const tosses = Array.from({ length: 3 }, () => {
+    const coin = noRay(new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.012, 18), M.brass));
+    coin.visible = false;
+    scene.add(coin);
+    const rings = [0, 1, 2].map(() => {
+      const mat = new THREE.MeshBasicMaterial({ color: 0xffbe2e, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide, toneMapped: false });
+      const ring = noRay(new THREE.Mesh(new THREE.RingGeometry(0.86, 1, 48), mat));
+      ring.rotation.x = -Math.PI / 2;
+      ring.renderOrder = 2; // after the transparent water
+      ring.visible = false;
+      scene.add(ring);
+      return { ring, mat };
+    });
+    return { coin, rings, age: 9, ang: 0 };
+  });
+  const tossed = bumpWatcher('prop_fountain_coin');
+  let nextToss = 0;
+  const FALL = 0.5;
+  c.updaters.push((f) => {
+    if (tossed(f)) {
+      const t = tosses[nextToss++ % tosses.length];
+      const me = f.state.players[f.myId]?.transform;
+      t.ang = (me ? Math.atan2(me.z - z, me.x) : Math.PI / 2) + Math.sin(nextToss * 2.4) * 0.22;
+      t.age = 0;
+    }
+    for (const t of tosses) {
+      if (t.age >= 9) continue;
+      t.age += f.dt;
+      const u = t.age / FALL;
+      const ca = Math.cos(t.ang);
+      const sa = Math.sin(t.ang);
+      t.coin.visible = u < 1;
+      if (u < 1) {
+        const rad = 2.35 - 0.8 * u;
+        t.coin.position.set(ca * rad, 1.25 + 0.9 * u - 1.65 * u * u, z + sa * rad);
+        t.coin.rotation.set(t.age * 22, t.age * 9, 0);
+      }
+      t.rings.forEach(({ ring, mat }, i) => {
+        const v = (t.age - FALL - i * 0.22) / 1.5;
+        ring.visible = v > 0 && v < 1;
+        if (!ring.visible) return;
+        ring.position.set(ca * 1.55, 0.52 + i * 0.002, z + sa * 1.55);
+        ring.scale.setScalar(0.04 + v * 0.4);
+        mat.opacity = 0.9 * (1 - v);
+      });
+    }
+  });
+  c.reg({ id: 'prop_fountain_coin', label: 'Toss a Coin in the Fountain', actionType: 'direct', maxDistance: 2.6 }, 0, 0.85, z, 4.72, 1.5, 4.72);
   k.disc(M.rosette, 3.4, 0, 0.012, z, 64);
   k.put(
     lathe([[1.98, 0], [2.3, 0], [2.3, 0.1], [2.18, 0.16], [2.16, 0.52], [2.3, 0.58], [2.3, 0.7], [1.98, 0.7], [1.94, 0.6], [1.94, 0.1]], 56),
@@ -3266,6 +3789,79 @@ function buildConservatory(c: Ctx): void {
   }
   c.light(-23, 2.6, -11, 0xbdfce0, 10, 9);
   c.light(-15, 2.6, -0.6, 0xffc9ee, 10, 9);
+  buildMist(c, k);
+}
+
+/** Brass mist valve by the south-east bed plus the glasshouse-wide shimmering droplets it feeds. */
+function buildMist(c: Ctx, k: Kit): void {
+  const { M, scene } = c;
+  const x = -14.6;
+  const z = 0.34;
+  k.cyl(M.brassDark, 0.14, 0.17, 0.08, x, 0, z, 18);
+  k.cyl(M.copper, 0.055, 0.055, 1.05, x, 0.08, z, 14);
+  k.torus(M.brass, 0.065, 0.018, x, 0.5, z, Math.PI / 2, 0, 0, 20);
+  k.sph(M.brass, 0.085, x, 1.1, z, 1, 1, 1, 16);
+  k.put(new THREE.CylinderGeometry(0.035, 0.035, 0.16, 12), M.brass, x, 1.1, z - 0.1, Math.PI / 2);
+  k.rod(M.copper, 0.035, [x, 1.12, z], [x, 1.12, 0.75], 10);
+  k.rod(M.copper, 0.035, [x, 1.12, 0.75], [x, 2.9, 1.5], 10);
+  const wheel = group(scene, x, 1.1, z - 0.2, Math.PI, (g) => {
+    g.torus(M.brass, 0.17, 0.024);
+    for (let s = 0; s < 5; s++) g.rod(M.brass, 0.013, [0, 0, 0], [Math.cos((s / 5) * TAU) * 0.17, Math.sin((s / 5) * TAU) * 0.17, 0]);
+    g.sph(M.verdigris, 0.042);
+    g.sph(M.velvetTeal, 0.035, 0, 0.17, 0.02, 1, 1, 1, 10);
+  });
+  c.reg({ id: 'prop_cons_mist', label: 'Toggle Glasshouse Mist', actionType: 'direct', maxDistance: 3.2 }, x, 1.08, z - 0.16, 0.5, 0.56, 0.4);
+
+  const N = 900;
+  const r = makeRng(740);
+  const pos = new Float32Array(N * 3);
+  const seed = new Float32Array(N * 2);
+  for (let i = 0; i < N; i++) {
+    pos.set([-25.3 + r() * 12.7, 0, -13.4 + r() * 14.8], i * 3);
+    seed.set([r(), r()], i * 2);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('aS', new THREE.BufferAttribute(seed, 2));
+  const uAmt = { value: 0 };
+  const mat = new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    uniforms: { uTime: M.uTime, uMap: { value: M.T.mote }, uAmt },
+    vertexShader: `
+      attribute vec2 aS; uniform float uTime, uAmt; varying float vA; varying float vK;
+      void main() {
+        float u = fract(uTime * (0.09 + aS.y * 0.07) + aS.x);
+        vec3 p = position;
+        p.y = mix(4.4, 0.35, u);
+        p.x += sin(uTime * 0.6 + aS.x * 40.0) * 0.35;
+        p.z += cos(uTime * 0.5 + aS.y * 40.0) * 0.35;
+        vec4 mv = modelViewMatrix * vec4(p, 1.0);
+        vK = aS.y;
+        float shimmer = 0.45 + 0.55 * sin(uTime * (3.0 + aS.y * 5.0) + aS.x * 60.0);
+        vA = uAmt * shimmer * smoothstep(0.0, 0.12, u) * (1.0 - smoothstep(0.82, 1.0, u)) * smoothstep(0.3, 1.2, -mv.z);
+        gl_PointSize = (14.0 + aS.y * 26.0) / max(0.6, -mv.z);
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: `
+      uniform sampler2D uMap; varying float vA; varying float vK;
+      void main() {
+        float a = texture2D(uMap, gl_PointCoord).a;
+        gl_FragColor = vec4(mix(vec3(0.75, 0.95, 1.0), vec3(0.85, 1.0, 0.88), vK), a * max(vA, 0.0) * 0.6);
+        #include <colorspace_fragment>
+      }`,
+  });
+  const pts = noRay(new THREE.Points(g, mat));
+  pts.frustumCulled = false;
+  pts.visible = false;
+  scene.add(pts);
+  c.updaters.push((f) => {
+    const on = Boolean(f.state.props.prop_cons_mist);
+    uAmt.value = damp(uAmt.value, on ? 1 : 0, 1.6, f.dt);
+    pts.visible = uAmt.value > 0.01;
+    wheel.rotation.z = damp(wheel.rotation.z, on ? -Math.PI * 1.5 : 0, 3.5, f.dt);
+  });
 }
 
 function valveBank(c: Ctx, bank: 'A' | 'B', x: number, z: number, ry: number, modalId: string): void {
@@ -3602,6 +4198,68 @@ function buildWorkshop(c: Ctx): void {
   for (let i = 0; i < 5; i++) {
     k.put(gearGeo(10 + i * 2, 0.16 + i * 0.03, 0.04), [M.brass, M.copper, M.silver][i % 3], 22.6 + i * 0.5, 0.9 + (i % 2) * 0.5, 1.6, 0, 0, i);
   }
+
+  // --- Brass steam whistle on the south pillar of the forge ---
+  const wx = 24.2;
+  const wz = -4.65;
+  k.rod(M.copper, 0.035, [24.36, 1.5, wz], [wx, 1.5, wz], 10);
+  k.sph(M.brass, 0.05, wx, 1.5, wz, 1, 1, 1, 12);
+  k.cyl(M.brass, 0.028, 0.028, 0.22, wx, 1.5, wz, 12);
+  k.cyl(M.brass, 0.075, 0.06, 0.06, wx, 1.72, wz, 20);
+  k.cyl(M.brass, 0.07, 0.07, 0.24, wx, 1.82, wz, 20);
+  k.put(new THREE.SphereGeometry(0.07, 18, 8, 0, TAU, 0, Math.PI / 2), M.brass, wx, 2.06, wz);
+  k.sph(M.brass, 0.022, wx, 2.15, wz, 1, 1, 1, 8);
+  const pull = group(scene, wx - 0.05, 1.5, wz, 0, (g) => {
+    g.rod(M.brass, 0.014, [0.05, 0, 0], [-0.14, 0.02, 0], 8);
+    for (let i = 0; i < 9; i++) g.torus(M.brassDark, 0.014, 0.004, -0.14, -0.005 - i * 0.026, 0, 0, i % 2 ? Math.PI / 2 : 0, 0, 10);
+    g.put(new THREE.CylinderGeometry(0.02, 0.02, 0.12, 10), M.walnutRed, -0.14, -0.26, 0, Math.PI / 2);
+  });
+  const puffWhistle = steamBurst(c, wx, 1.8, wz, { n: 12, size: 0.7, rise: 1.5, spread: 0.34, life: 1.8, gap: 0.08 });
+  const whistled = bumpWatcher('prop_ws_whistle');
+  let pullAge = 9;
+  c.updaters.push((f) => {
+    if (whistled(f)) {
+      pullAge = 0;
+      puffWhistle();
+    }
+    pullAge = Math.min(9, pullAge + f.dt);
+    const down = pullAge < 0.7 ? Math.min(1, pullAge * 8) : Math.exp(-(pullAge - 0.7) * 6);
+    pull.rotation.z = down * 0.45;
+  });
+  c.reg({ id: 'prop_ws_whistle', label: 'Pull Steam Whistle', actionType: 'direct', maxDistance: 3.2 }, 24.12, 1.68, wz, 0.5, 1.05, 0.44);
+
+  // --- Suspended bronze chime (hung from a roof-truss, clear of heads) ---
+  const bx2 = 22.8;
+  const bz2 = -9.2;
+  const bronze = M.std({ color: 0xb5793a, metalness: 0.85, roughness: 0.3, envMapIntensity: 1.3 });
+  const chime = group(scene, bx2, 5.28, bz2, 0, (g) => {
+    for (const s of [-1, 1]) g.rod(M.darkIron, 0.01, [0, 0, 0], [0, -2.5, s * 0.22], 6);
+    g.put(new THREE.CylinderGeometry(0.06, 0.06, 0.8, 20), bronze, 0, -2.56, 0, Math.PI / 2);
+    for (const s of [-1, 1]) {
+      g.torus(M.brass, 0.062, 0.012, 0, -2.56, s * 0.22, 0, 0, 0, 20);
+      g.torus(M.brass, 0.06, 0.016, 0, -2.56, s * 0.4, 0, 0, 0, 20);
+    }
+    g.rod(M.bark, 0.006, [0, -2.6, 0.3], [0, -3.0, 0.3], 5);
+    g.sph(M.walnutRed, 0.045, 0, -3.02, 0.3, 1, 1.3, 1, 12);
+  });
+  const chimeGlow = glowSprite(M, 0xffb060, 1.3, 0);
+  chimeGlow.position.set(0, -2.56, 0);
+  chime.add(chimeGlow);
+  const struck = bumpWatcher('prop_ws_chime');
+  let swing = 0;
+  let phase = 0;
+  c.updaters.push((f) => {
+    if (struck(f)) {
+      swing = 1;
+      phase = 0;
+    }
+    swing = damp(swing, 0, 0.8, f.dt);
+    phase += f.dt;
+    chime.rotation.z = Math.sin(phase * 4.2) * 0.13 * swing;
+    chime.rotation.x = Math.sin(phase * 3.1) * 0.04 * swing;
+    (chimeGlow.material as THREE.SpriteMaterial).opacity = swing * 0.35;
+  });
+  c.reg({ id: 'prop_ws_chime', label: 'Strike Bronze Chime', actionType: 'direct', maxDistance: 3.4 }, bx2, 2.6, bz2, 0.6, 0.8, 1.1);
 }
 
 // ============================================================
@@ -3809,6 +4467,41 @@ function buildObservatory(c: Ctx): void {
   c.ambient.push((t) => (tube.rotation.y = Math.sin(t * 0.12) * 0.6));
   for (const [x, z] of [[-9.2, -13.8], [8.1, -13.8], [-9.2, -19.8], [8.1, -19.8]] as const) pottedPlant(c, k, x, z, 0.9, Math.round(x * 3 + z), Y);
   for (const [x, z] of [[-8.6, -16.8], [11.5, -20.0]] as const) lampPost(c, k, x, z, Y);
+
+  // Brass viewing spyglass on a tripod by the west railing
+  const sgx = -9.2;
+  const sgz = -18.1;
+  k.put(new THREE.CylinderGeometry(0.06, 0.08, 0.1, 14), M.brassDark, sgx, Y + 1.12, sgz);
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * TAU + 0.3;
+    k.rod(M.brass, 0.022, [sgx, Y + 1.12, sgz], [sgx + Math.cos(a) * 0.3, Y, sgz + Math.sin(a) * 0.3], 8);
+  }
+  k.torus(M.brassDark, 0.16, 0.01, sgx, Y + 0.52, sgz, Math.PI / 2, 0, 0, 24);
+  // Local +Z is the objective end, so a yaw of -PI/2 looks west over the hills
+  const spy = group(scene, sgx, Y + 1.26, sgz, -Math.PI / 2, (g) => {
+    g.cyl(M.brass, 0.025, 0.025, 0.1, 0, -0.1, 0, 10);
+    g.put(new THREE.CylinderGeometry(0.075, 0.065, 0.36, 22), M.brass, 0, 0, 0.22, Math.PI / 2);
+    g.put(new THREE.CylinderGeometry(0.058, 0.058, 0.3, 20), M.walnutRed, 0, 0, -0.08, Math.PI / 2);
+    g.put(new THREE.CylinderGeometry(0.045, 0.045, 0.22, 18), M.brass, 0, 0, -0.32, Math.PI / 2);
+    g.torus(M.brass, 0.076, 0.012, 0, 0, 0.4);
+    g.torus(M.brass, 0.06, 0.01, 0, 0, 0.05);
+    g.torus(M.brass, 0.048, 0.012, 0, 0, -0.43);
+    g.put(new THREE.CircleGeometry(0.07, 24), M.glow(0x9fdcff, 0.3), 0, 0, 0.395);
+  });
+  const peered = bumpWatcher('prop_obs_spyglass');
+  let spyAge = 9;
+  let spySide = 1;
+  c.updaters.push((f) => {
+    if (peered(f)) {
+      spyAge = 0;
+      spySide = -spySide;
+    }
+    spyAge = Math.min(9, spyAge + f.dt);
+    const env = spyAge < 3 ? Math.sin((spyAge / 3) * Math.PI) : 0;
+    spy.rotation.y = damp(spy.rotation.y, -Math.PI / 2 + spySide * env * 0.42, 5, f.dt);
+    spy.rotation.x = damp(spy.rotation.x, -0.06 - env * 0.12, 5, f.dt);
+  });
+  c.reg({ id: 'prop_obs_spyglass', label: 'Peer Through Brass Spyglass', actionType: 'direct', maxDistance: 3.2 }, sgx + 0.05, Y + 1.15, sgz, 0.8, 0.8, 0.5);
 
   // --- Wind-Harp chimes along the north balcony ---
   const harps: [HarpColor, number][] = [
@@ -4469,8 +5162,15 @@ function buildPickups(c: Ctx): void {
 // The avatar is modelled facing +Z, hence the half-turn.
 const AVATAR_YAW_OFFSET = Math.PI;
 
+const CROUCH_DROP = -0.52;
+
 interface Avatar {
   root: THREE.Group;
+  hats: Record<Exclude<HatStyle, 'none'>, THREE.Group>;
+  faceGoggles: THREE.Group;
+  bob: THREE.Sprite;
+  crouch: number;
+  setLook: (a: PlayerAppearance) => void;
   body: THREE.Group;
   head: THREE.Group;
   legs: THREE.Group[];
@@ -4491,6 +5191,9 @@ function buildAvatar(c: Ctx, info: PlayerInfo): Avatar {
   const accent = M.std({ color: new THREE.Color(info.color), roughness: 0.7, emissive: new THREE.Color(info.color), emissiveIntensity: 0.12 });
   const coat = M.std({ color: info.slot === 1 ? 0x8a4a2c : 0x2d6270, roughness: 0.85 });
   const coatDark = M.std({ color: info.slot === 1 ? 0x653219 : 0x1f4650, roughness: 0.9 });
+  const lens = M.glow(0x8fe8ff, 0.5);
+  const hair = M.std({ color: 0x4b3222, roughness: 0.95 });
+  const leather = M.std({ color: 0x6d4526, roughness: 0.7 });
   const skin = M.std({ color: 0xf0d3b4, roughness: 0.65 });
   const boots = M.std({ color: 0x4a2f20, roughness: 0.7 });
   const trousers = M.std({ color: 0x5c4a3c, roughness: 0.9 });
@@ -4516,19 +5219,58 @@ function buildAvatar(c: Ctx, info: PlayerInfo): Avatar {
   const head = group(root, 0, 1.6, 0, 0, (k) => {
     k.sph(skin, 0.17, 0, 0.06, 0, 1, 1.12, 1);
     k.sph(skin, 0.03, 0, 0.04, 0.175, 1, 1, 1, 10);
-    // goggles
-    k.torus(M.brassDark, 0.172, 0.02, 0, 0.1, 0, Math.PI / 2);
-    for (const s of [-1, 1]) {
-      k.put(new THREE.CylinderGeometry(0.062, 0.062, 0.05, 20), M.brass, s * 0.07, 0.1, 0.16, Math.PI / 2);
-      k.put(new THREE.CylinderGeometry(0.048, 0.048, 0.055, 20), M.glow(0x8fe8ff, 0.5), s * 0.07, 0.1, 0.162, Math.PI / 2);
-    }
-    // cap
-    k.put(new THREE.SphereGeometry(0.195, 20, 10, 0, TAU, 0, Math.PI / 2), coatDark, 0, 0.13, -0.01, 0, 0, 0, 1, 0.85, 1.05);
-    k.put(new THREE.CylinderGeometry(0.17, 0.2, 0.025, 20), coat, 0, 0.14, 0.09, 0.14, 0, 0, 1, 1, 0.9);
-    k.put(gearGeo(10, 0.06, 0.025, 0.4, 0), M.brass, 0.14, 0.2, 0.1, 0, 0.9);
-    k.torus(accent, 0.196, 0.018, 0, 0.155, -0.01, Math.PI / 2);
+    for (const s of [-1, 1]) k.sph(M.ebony, 0.022, s * 0.066, 0.09, 0.155, 1, 1.2, 0.7, 10);
+    k.put(new THREE.SphereGeometry(0.182, 20, 10, 0, TAU, 0, Math.PI / 2), hair, 0, 0.1, -0.018, -0.18, 0, 0, 1, 0.82, 1.02);
     k.box(M.bark, 0.07, 0.012, 0.01, 0, -0.035, 0.165);
   });
+  // Goggles worn over the eyes (hidden under the aviator cap, which carries its own raised pair)
+  const faceGoggles = group(head, 0, 0, 0, 0, (k) => {
+    k.torus(M.brassDark, 0.176, 0.02, 0, 0.1, 0, Math.PI / 2);
+    for (const s of [-1, 1]) {
+      k.put(new THREE.CylinderGeometry(0.062, 0.062, 0.05, 20), M.brass, s * 0.07, 0.1, 0.16, Math.PI / 2);
+      k.put(new THREE.CylinderGeometry(0.048, 0.048, 0.055, 20), lens, s * 0.07, 0.1, 0.162, Math.PI / 2);
+    }
+  });
+  const hats: Avatar['hats'] = {
+    tophat: group(head, 0, 0.185, -0.015, 0, (k) => {
+      k.cyl(M.ebony, 0.29, 0.29, 0.022, 0, 0, 0, 32);
+      k.torus(M.ebony, 0.285, 0.014, 0, 0.011, 0, Math.PI / 2, 0, 0, 32);
+      k.cyl(M.ebony, 0.2, 0.18, 0.32, 0, 0.02, 0, 32);
+      k.cyl(M.brass, 0.1985, 0.1915, 0.065, 0, 0.026, 0, 32);
+      k.put(gearGeo(10, 0.055, 0.022, 0.4, 0), M.brass, 0.1, 0.07, 0.168, 0, 0.55);
+      k.put(gearGeo(8, 0.034, 0.02, 0.4, 0), M.copper, 0.16, 0.115, 0.115, 0, 0.95);
+      k.cone(accent, 0.022, 0.2, 0.16, 0.07, 0.04, 6, 0.1, 0, -0.35);
+    }),
+    beret: group(head, 0, 0.17, -0.01, 0, (k) => {
+      const t = k.at(-0.035, 0.015, -0.015, 0, -0.1, 0.24);
+      t.torus(coatDark, 0.17, 0.024, 0.02, 0, 0.01, Math.PI / 2, 0, 0, 30);
+      t.sph(coat, 0.235, 0, 0.05, 0, 1, 0.36, 1.02, 26);
+      t.cyl(coatDark, 0.012, 0.018, 0.04, 0, 0.12, 0, 8);
+      t.put(new THREE.CylinderGeometry(0.034, 0.034, 0.014, 20), M.brass, 0.11, 0.045, 0.19, Math.PI / 2, 0.5);
+      t.put(new THREE.ExtrudeGeometry(starShape(6, 0.024, 0.012), { depth: 0.006, bevelEnabled: false }), accent, 0.113, 0.045, 0.2, 0, 0.5);
+    }),
+    aviator: group(head, 0, 0, 0, 0, (k) => {
+      k.put(new THREE.SphereGeometry(0.205, 26, 14, 0, TAU, 0, Math.PI * 0.52), leather, 0, 0.1, -0.02, -0.16, 0, 0, 1, 1.02, 1.04);
+      k.torus(M.cream, 0.198, 0.022, 0, 0.115, -0.015, Math.PI / 2 - 0.16, 0, 0, 30);
+      k.rod(M.bark, 0.008, [0, 0.31, -0.02], [0, 0.2, 0.165], 6);
+      for (const s of [-1, 1]) {
+        k.sph(leather, 0.085, s * 0.172, 0.0, 0, 0.35, 1.25, 0.95, 14);
+        k.sph(M.brass, 0.018, s * 0.205, 0.0, 0.01, 1, 1, 1, 8);
+        k.rod(leather, 0.014, [s * 0.16, -0.08, 0.02], [s * 0.1, -0.14, 0.08], 6);
+        k.put(new THREE.CylinderGeometry(0.064, 0.064, 0.05, 20), M.brass, s * 0.074, 0.225, 0.165, Math.PI / 2 - 0.45);
+        k.put(new THREE.CylinderGeometry(0.05, 0.05, 0.056, 20), lens, s * 0.074, 0.226, 0.168, Math.PI / 2 - 0.45);
+      }
+      k.torus(M.brassDark, 0.205, 0.016, 0, 0.2, -0.015, Math.PI / 2 - 0.2, 0, 0, 30);
+    }),
+  };
+  const setLook = (a: PlayerAppearance): void => {
+    coat.color.set(a.coatColor);
+    coatDark.color.set(a.coatColor).multiplyScalar(0.62);
+    lens.color.set(a.goggleColor).multiplyScalar(0.35);
+    lens.emissive.set(a.goggleColor);
+    for (const style of ['tophat', 'beret', 'aviator'] as const) hats[style].visible = a.hatStyle === style;
+    faceGoggles.visible = a.hatStyle !== 'aviator';
+  };
   const legs = [-1, 1].map((s) =>
     group(root, s * 0.11, 0.72, 0, 0, (k) => {
       k.cyl(trousers, 0.085, 0.07, 0.4, 0, -0.42, 0, 12);
@@ -4567,12 +5309,37 @@ function buildAvatar(c: Ctx, info: PlayerInfo): Avatar {
   const bob = glowSprite(M, new THREE.Color(info.color).getHex(), 0.5, 0.6);
   bob.position.y = 2.45;
   root.add(bob);
-  return { root, body, head, legs, arms, hand, heldId: null, name: info.name, nameSprite, cone, coneMat, gait: 0, stride: 0, fresh: true };
+  return { root, hats, faceGoggles, bob, crouch: 0, setLook, body, head, legs, arms, hand, heldId: null, name: info.name, nameSprite, cone, coneMat, gait: 0, stride: 0, fresh: true };
 }
 
 function buildAvatars(c: Ctx, partnerUv: THREE.SpotLight): void {
   const avatars = new Map<string, Avatar>();
+  const looks = new Map<string, string>();
   const dir = new THREE.Vector3();
+
+  // Direct hand-off: one hitbox that rides on whichever partner avatar is currently connected
+  const partnerOf = (s: WorldState): PlayerInfo | undefined => Object.values(s.players).find((p) => p.id !== c.myId && p.connected);
+  const handProxy = c.reg(
+    {
+      id: 'partner_hand_item',
+      label: 'Hand item to partner',
+      actionType: 'direct',
+      maxDistance: 3.4,
+      enabled: (s) => partnerOf(s) !== undefined,
+      getLabel: (s) => {
+        const held = s.players[c.myId]?.transform.heldItem;
+        const partner = partnerOf(s);
+        return held && partner ? `Hand ${ITEMS[held].shortName} to ${partner.name}` : null;
+      },
+    },
+    0,
+    0.95,
+    0,
+    0.85,
+    1.9,
+    0.85,
+  );
+
   c.updaters.push((f) => {
     let uvI = 0;
     for (const info of Object.values(f.state.players)) {
@@ -4587,8 +5354,16 @@ function buildAvatars(c: Ctx, partnerUv: THREE.SpotLight): void {
         av.fresh = true;
         continue;
       }
+      if (handProxy.parent !== av.root) av.root.add(handProxy);
+      const look = `${info.appearance.coatColor}|${info.appearance.goggleColor}|${info.appearance.hatStyle}`;
+      if (looks.get(info.id) !== look) {
+        looks.set(info.id, look);
+        av.setLook(info.appearance);
+      }
       const t = info.transform;
       const p = av.root.position;
+      if (av.fresh) av.crouch = t.crouching ? CROUCH_DROP : 0;
+      av.crouch = damp(av.crouch, t.crouching ? CROUCH_DROP : 0, 11, f.dt);
       const jump = Math.hypot(t.x - p.x, t.y - p.y, t.z - p.z);
       if (av.fresh || jump > 5) {
         p.set(t.x, t.y, t.z);
@@ -4612,7 +5387,15 @@ function buildAvatars(c: Ctx, partnerUv: THREE.SpotLight): void {
       av.arms[1].rotation.z = 0.09;
       av.arms[0].rotation.x = damp(av.arms[0].rotation.x, holding ? -1.25 - t.pitch * 0.6 : -sw * 0.85, 12, f.dt);
       av.arms[0].rotation.z = -0.09;
-      av.body.position.y = Math.abs(Math.cos(av.gait)) * 0.035 * av.stride + Math.sin(f.t * 1.8) * 0.006;
+      av.body.position.y = av.crouch + Math.abs(Math.cos(av.gait)) * 0.035 * av.stride + Math.sin(f.t * 1.8) * 0.006;
+      for (const arm of av.arms) arm.position.y = 1.38 + av.crouch;
+      for (const leg of av.legs) {
+        // hips sink with the torso; the legs fold so the boots stay planted
+        leg.position.y = 0.72 + av.crouch;
+        leg.scale.y = (0.72 + av.crouch) / 0.72;
+      }
+      av.nameSprite.position.y = 2.2 + av.crouch + (info.appearance.hatStyle === 'tophat' ? 0.14 : 0);
+      av.bob.position.y = av.nameSprite.position.y + 0.25;
       av.body.rotation.z = Math.sin(av.gait) * 0.025 * av.stride;
       av.head.rotation.x = damp(av.head.rotation.x, -t.pitch * 0.8, 12, f.dt);
       av.head.position.y = 1.6 + av.body.position.y;
@@ -4636,13 +5419,108 @@ function buildAvatars(c: Ctx, partnerUv: THREE.SpotLight): void {
         uvI = 1;
         const cp = Math.cos(t.pitch);
         dir.set(-Math.sin(t.yaw) * cp, Math.sin(t.pitch), -Math.cos(t.yaw) * cp);
-        partnerUv.position.set(p.x, p.y + 1.45, p.z).addScaledVector(dir, 0.35);
+        partnerUv.position.set(p.x, p.y + 1.45 + av.crouch, p.z).addScaledVector(dir, 0.35);
         partnerUv.target.position.copy(partnerUv.position).addScaledVector(dir, 4);
         partnerUv.target.updateMatrixWorld();
       }
     }
     partnerUv.intensity = damp(partnerUv.intensity, uvI * 60, 10, f.dt);
     for (const [id, av] of avatars) if (!f.state.players[id]) av.root.visible = false;
+  });
+}
+
+// ============================================================
+// DROPPED ITEMS (set down by players for their partner)
+// ============================================================
+function buildDroppedItems(c: Ctx): void {
+  const { M, scene } = c;
+  interface Dropped {
+    group: THREE.Group;
+    interactable: InteractableObject;
+    spin: THREE.Group;
+    halo: THREE.SpriteMaterial;
+    ring: THREE.MeshBasicMaterial;
+    pop: number;
+    phase: number;
+  }
+  const live = new Map<ItemId, Dropped>();
+
+  const make = (d: DroppedItem): Dropped => {
+    const root = group(scene, d.x, d.y, d.z, 0);
+    root.name = `dropped_${d.itemId}`;
+    const spin = group(root, 0, 0.42, 0, 0);
+    const item = makeItemMesh(M, d.itemId);
+    item.scale.setScalar(0.85);
+    spin.add(item);
+    const haloSprite = glowSprite(M, ITEM_GLOW[d.itemId], 1.15, 0.5);
+    haloSprite.position.y = 0.42;
+    root.add(haloSprite);
+    const ring = new THREE.MeshBasicMaterial({ color: 0xffc53a, transparent: true, opacity: 0.7, depthWrite: false, side: THREE.DoubleSide, toneMapped: false });
+    const ringMesh = noRay(new THREE.Mesh(new THREE.RingGeometry(0.27, 0.34, 48), ring));
+    ringMesh.rotation.x = -Math.PI / 2;
+    ringMesh.position.y = 0.03;
+    ringMesh.renderOrder = 2; // after the transparent rugs
+    root.add(ringMesh);
+    const pool = noRay(new THREE.Mesh(new THREE.PlaneGeometry(0.95, 0.95), new THREE.MeshBasicMaterial({ map: M.T.glow, color: 0xffc24a, transparent: true, opacity: 0.28, blending: THREE.AdditiveBlending, depthWrite: false })));
+    pool.rotation.x = -Math.PI / 2;
+    pool.position.y = 0.026;
+    pool.renderOrder = 2;
+    root.add(pool);
+    // Generous invisible hitbox so small keys are easy to aim at
+    const hit = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.84, 0.62), PROXY_MAT);
+    hit.position.y = 0.4;
+    root.add(hit);
+    root.updateWorldMatrix(true, true);
+    return {
+      group: root,
+      interactable: {
+        id: `dropped_${d.itemId}`,
+        mesh: root,
+        label: `Pick up ${ITEMS[d.itemId].name}`,
+        actionType: 'pickup',
+        itemId: d.itemId,
+        maxDistance: 4.0,
+      },
+      spin,
+      halo: haloSprite.material,
+      ring,
+      pop: 0,
+      phase: live.size * 1.3,
+    };
+  };
+
+  const remove = (id: ItemId, d: Dropped): void => {
+    live.delete(id);
+    const at = c.interactables.indexOf(d.interactable);
+    if (at >= 0) c.interactables.splice(at, 1);
+    scene.remove(d.group);
+    d.group.traverse((o) => {
+      if (o instanceof THREE.Mesh) o.geometry.dispose();
+    });
+    d.halo.dispose();
+    d.ring.dispose();
+    c.touchInteractables();
+  };
+
+  c.updaters.push((f) => {
+    const list = f.state.droppedItems;
+    for (const [id, d] of live) if (!list.some((e) => e.itemId === id)) remove(id, d);
+    for (const e of list) {
+      let d = live.get(e.itemId);
+      if (!d) {
+        d = make(e);
+        live.set(e.itemId, d);
+        c.interactables.push(d.interactable);
+        c.touchInteractables();
+      }
+      d.group.position.set(e.x, e.y, e.z);
+      d.pop = damp(d.pop, 1, 6, f.dt);
+      d.spin.scale.setScalar(0.2 + d.pop * 0.8);
+      d.spin.position.y = 0.42 + Math.sin(f.t * 2 + d.phase) * 0.05;
+      d.spin.rotation.y = f.t * 1.1 + d.phase;
+      d.halo.opacity = 0.42 + Math.sin(f.t * 3 + d.phase) * 0.12;
+      d.ring.opacity = 0.6 + Math.sin(f.t * 2.4 + d.phase) * 0.2;
+    }
   });
 }
 
@@ -4730,6 +5608,7 @@ export const DECOR_COLLIDERS: BoxCollider[] = [
   box('hearth', 0, 17.3, 3.3, 0.8),
   box('foyer_oracle', -6.6, 16.6, 1.3, 1.3, 2.6),
   box('foyer_pedestal', -5.9, 9.2, 0.6, 0.6, 1),
+  box('credenza', CREDENZA.x, CREDENZA.z, 0.6, 1.5, 0.95),
   box('cipher', 11.4, 11.6, 2.2, 0.8),
   box('balance', 19.2, 14.9, 0.9, 2.6, 1),
   box('cabinet', 11.6, 17.4, 2.2, 0.6, 2.4),
@@ -4756,6 +5635,7 @@ export const DECOR_COLLIDERS: BoxCollider[] = [
   box('hedge_n', -7.6, -13.3, 4, 0.7, 1),
   box('valves_a', -19, -13, 2.9, 0.5, 2),
   box('valves_b', -19, 1.0, 2.9, 0.5, 2),
+  box('mist_valve', -14.6, 0.34, 0.3, 0.3, 1.2),
   box('anvil', 19.6, -6, 0.9, 0.8, 1.1),
   box('workbench', 17.4, 1.2, 5.2, 1.0, 1),
   box('forge', 25.0, -6, 1.3, 3.6, 3),
@@ -4763,6 +5643,7 @@ export const DECOR_COLLIDERS: BoxCollider[] = [
   box('foundry_s', 24.2, -0.2, 0.4, 0.4, 1.6),
   box('orrery', -1, -16.85, 1.0, 1.0, 1.4, OBSERVATORY_DECK.y),
   box('orrery_ledger', -5.6, -14.7, 0.5, 0.5, 1.2, OBSERVATORY_DECK.y),
+  box('spyglass', -9.2, -18.1, 0.4, 0.4, 1.3, OBSERVATORY_DECK.y),
   box('star_pedestal', 2.9, -14.5, 0.6, 0.6, 1, OBSERVATORY_DECK.y),
   ...([-5.4, -1.5, 1.5, 5.4] as const).map((x, i) => box(`gate_pedestal_${i}`, x, Math.abs(x) < 2 ? -26.35 : -25.8, 0.6, 0.6, 1)),
   box('spire', 9.6, -22.4, 1.2, 1.2, 4),
@@ -4792,7 +5673,12 @@ export function buildSolsticeWorld(): BuiltWorld {
     ambient,
     anchors,
     uvFrames: [],
+    uvCharge: [0, 0, 0, 0],
     uv,
+    myId: '',
+    touchInteractables: () => {
+      world.interactablesVersion++;
+    },
     reg: (o, x, y, z, w, h, d, ry = 0) => {
       const { enabled, ...rest } = o;
       const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), PROXY_MAT);
@@ -4839,6 +5725,7 @@ export function buildSolsticeWorld(): BuiltWorld {
   const myUv = mkUv();
   const partnerUv = mkUv();
   buildAvatars(c, partnerUv);
+  buildDroppedItems(c);
   buildPings(c);
 
   // A small pool of point lights follows the anchors nearest to the viewer.
@@ -4890,11 +5777,14 @@ export function buildSolsticeWorld(): BuiltWorld {
     myUv.target.updateMatrixWorld();
   };
 
-  return {
+  const world: BuiltWorld = {
     scene,
     interactables,
+    interactablesVersion: 0,
+    isUvFrameGlowing: (index) => (c.uvCharge[index] ?? 0) > UV_GLOW_MIN,
     uvFrames: c.uvFrames,
     updateFromState: (state, myPlayerId, dt, elapsed) => {
+      c.myId = myPlayerId;
       const frame: Frame = { state, p: state.puzzles, myId: myPlayerId, dt: Math.min(dt, 0.1), t: elapsed };
       for (const g of gates) setProxyActive(g.mesh, g.enabled(state));
       for (const fn of updaters) fn(frame);
@@ -4907,4 +5797,5 @@ export function buildSolsticeWorld(): BuiltWorld {
       aimLocalUv();
     },
   };
+  return world;
 }

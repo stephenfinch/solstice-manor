@@ -163,7 +163,22 @@ describe('Solstice Manor — Complete 2-Player Escape Room Verification', () => 
     expect(room.state.solvedPuzzles.p12_wind_harp).toBe(true);
     room.handlePickup(p2.id, 'core_wind');
 
-    // P13: Grand Solstice Gate Finale!
+    // P13: Grand Solstice Gate Finale! (Separate inventories: each player inserts their own cores OR hands/drops them!)
+    // Verify P1 cannot insert P2's Gear Core directly
+    room.handleInteract(p1.id, 'p13_insert_core', { core: 'gear' });
+    expect(room.state.puzzles.gateCoresInserted.gear).toBe(false);
+
+    // P2 hands Gear Core directly to P1, and drops Wind Core on the ground for P1 to pick up
+    room.handleGiveOrDropItem(p2.id, 'core_gear', 'partner');
+    expect(p1.inventory).toContain('core_gear');
+    expect(p2.inventory).not.toContain('core_gear');
+
+    room.handleGiveOrDropItem(p2.id, 'core_wind', 'drop', 0, 0, -18);
+    expect(room.state.droppedItems.some((d) => d.itemId === 'core_wind')).toBe(true);
+    room.handlePickup(p1.id, 'core_wind');
+    expect(room.state.droppedItems.length).toBe(0);
+    expect(p1.inventory).toContain('core_wind');
+
     for (const core of ['sun', 'gear', 'star', 'wind'] as const) {
       room.handleInteract(p1.id, 'p13_insert_core', { core });
       room.handleInteract(p2.id, 'p13_set_dial', { core, dir: SOLUTIONS.p13_cardinals[core] });
@@ -227,5 +242,51 @@ describe('Solstice Manor — Complete 2-Player Escape Room Verification', () => 
     // Trying to start again during 10-minute cooldown is blocked!
     room.handleMinigameReady(p1.id);
     expect(room.state.minigame.phase).toBe('result');
+  });
+
+  it('supports unlimited and disabled hint modes, separate inventories, interactive props, and character appearance', () => {
+    // 1. Unlimited hints mode: instant hints with zero cooldown
+    const unlimitedRoom = new GameRoom(
+      'UNLM',
+      { broadcast: () => {}, sendTo: () => {} },
+      'unlimited',
+    );
+    const u1 = unlimitedRoom.addOrReconnectPlayer('Clara', undefined, {
+      coatColor: '#2e4a73',
+      hatStyle: 'aviator',
+      goggleColor: '#68d391',
+    })!;
+    expect(unlimitedRoom.state.hintMode).toBe('unlimited');
+    expect(u1.appearance).toEqual({
+      coatColor: '#2e4a73',
+      hatStyle: 'aviator',
+      goggleColor: '#68d391',
+    });
+
+    unlimitedRoom.handleRequestUnlimitedHint(u1.id, 'p1_foyer_clock');
+    unlimitedRoom.handleRequestUnlimitedHint(u1.id, 'p1_foyer_clock');
+    expect(unlimitedRoom.state.unlockedHints.length).toBe(2);
+    expect(unlimitedRoom.state.unlockedHints[0].tier).toBe(1);
+    expect(unlimitedRoom.state.unlockedHints[1].tier).toBe(2);
+    expect(unlimitedRoom.state.hintCooldownEndsAt).toBe(0);
+
+    // 2. Disabled hints mode ('none'): blocks both unlimited hints & Oracle minigame
+    const noHintRoom = new GameRoom('NONE', { broadcast: () => {}, sendTo: () => {} }, 'none');
+    const n1 = noHintRoom.addOrReconnectPlayer('Theo')!;
+    const n2 = noHintRoom.addOrReconnectPlayer('Maya')!;
+    noHintRoom.handleRequestUnlimitedHint(n1.id);
+    noHintRoom.handleMinigameReady(n1.id);
+    noHintRoom.handleMinigameReady(n2.id);
+    expect(noHintRoom.state.unlockedHints.length).toBe(0);
+    expect(noHintRoom.state.minigame.phase).toBe('idle');
+
+    // 3. Interactive props toggle & increment cleanly
+    noHintRoom.handleToggleProp(n1.id, 'prop_foyer_drawer_1');
+    expect(noHintRoom.state.props.prop_foyer_drawer_1).toBe(true);
+    noHintRoom.handleToggleProp(n1.id, 'prop_foyer_drawer_1');
+    expect(noHintRoom.state.props.prop_foyer_drawer_1).toBe(false);
+    noHintRoom.handleToggleProp(n2.id, 'prop_foyer_bell');
+    noHintRoom.handleToggleProp(n2.id, 'prop_foyer_bell');
+    expect(noHintRoom.state.props.prop_foyer_bell).toBe(2);
   });
 });

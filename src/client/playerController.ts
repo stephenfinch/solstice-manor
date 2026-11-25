@@ -22,9 +22,13 @@ const LOS_DECOR_OCCLUDERS = DECOR_COLLIDERS.filter(
 );
 
 const PLAYER_RADIUS = 0.38;
-const EYE_HEIGHT = 1.68;
-const WALK_SPEED = 4.4;
-const SPRINT_SPEED = 6.2;
+const EYE_HEIGHT_STAND = 1.68;
+const EYE_HEIGHT_CROUCH = 1.02;
+const WALK_SPEED = 4.5;
+const SPRINT_SPEED = 6.3;
+const CROUCH_SPEED = 2.55;
+const JUMP_VELOCITY = 5.1;
+const GRAVITY = 15.5;
 
 export class FirstPersonController {
   public camera: THREE.PerspectiveCamera;
@@ -34,6 +38,7 @@ export class FirstPersonController {
   public yaw = 0; // facing North (-Z)
   public pitch = 0;
   public uvOn = false;
+  public crouching = false;
   public heldItem: ItemId | null = null;
   public isPointerLocked = false;
   public currentZone: ZoneDefinition;
@@ -41,15 +46,25 @@ export class FirstPersonController {
   public targetedLabel: string | null = null;
 
   private keys = new Set<string>();
+  private crouchToggled = false;
+  private vx = 0;
+  private vz = 0;
+  private vy = 0;
+  private grounded = true;
+  private coyoteTimer = 0;
+  private eyeHeight = EYE_HEIGHT_STAND;
+  private bobTimer = 0;
+  private bobAmp = 0;
+  private stepAccum = 0;
+
   private domElement: HTMLElement;
   private raycaster = new THREE.Raycaster();
   private screenCenter = new THREE.Vector2(0, 0);
-  private bobTimer = 0;
-  private stepAccum = 0;
   private onFootstep: (material: FloorMaterial) => void;
   private onPointerLockChange: (locked: boolean) => void;
   private canMove: () => boolean;
   private meshToInteractable = new Map<THREE.Object3D, InteractableObject>();
+  private lastInteractablesVersion = -1;
 
   constructor(
     camera: THREE.PerspectiveCamera,
@@ -68,20 +83,33 @@ export class FirstPersonController {
     this.canMove = callbacks.canMove;
     this.currentZone = detectZone(this.x, this.y, this.z);
 
-    // Index all descendant meshes -> interactable object for fast raycasting
+    this.reindexInteractables(world);
+    this.bindEvents();
+  }
+
+  private reindexInteractables(world: BuiltWorld): void {
+    this.meshToInteractable.clear();
     for (const item of world.interactables) {
       item.mesh.traverse((child) => {
         this.meshToInteractable.set(child, item);
       });
     }
-
-    this.bindEvents();
+    this.lastInteractablesVersion = world.interactablesVersion ?? world.interactables.length;
   }
 
   public teleport(x: number, y: number, z: number, yaw: number): void {
     this.x = x;
     this.y = y;
     this.z = z;
+    this.vx = 0;
+    this.vz = 0;
+    this.vy = 0;
+    this.grounded = true;
+    this.coyoteTimer = 0;
+    this.crouching = false;
+    this.crouchToggled = false;
+    this.eyeHeight = EYE_HEIGHT_STAND;
+    this.bobAmp = 0;
     this.yaw = yaw;
     this.pitch = 0;
     this.currentZone = detectZone(x, y, z);
@@ -118,15 +146,35 @@ export class FirstPersonController {
 
     document.addEventListener('mousemove', (e) => {
       if (!this.isPointerLocked || !this.canMove()) return;
+      // Clamp macOS/Chromium PointerLock single-frame glitch spikes so look never jerks
+      const dx = Math.max(-120, Math.min(120, e.movementX));
+      const dy = Math.max(-120, Math.min(120, e.movementY));
       const sensitivity = 0.0021;
-      this.yaw -= e.movementX * sensitivity;
-      this.pitch -= e.movementY * sensitivity;
+      this.yaw -= dx * sensitivity;
+      this.pitch -= dy * sensitivity;
       this.pitch = Math.max(-1.42, Math.min(1.42, this.pitch));
     });
 
     window.addEventListener('keydown', (e) => {
       if (!this.canMove() || isTypingTarget(e.target)) return;
       this.keys.add(e.code);
+
+      // Jump on Space (when not repeating)
+      if (e.code === 'Space' && !e.repeat) {
+        e.preventDefault();
+        if (this.grounded || this.coyoteTimer > 0) {
+          this.vy = JUMP_VELOCITY;
+          this.grounded = false;
+          this.coyoteTimer = 0;
+          this.crouchToggled = false;
+          this.onFootstep(this.currentZone.material);
+        }
+      }
+
+      // Toggle crouch with V (hold Control also crouches)
+      if (e.code === 'KeyV' && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        this.crouchToggled = !this.crouchToggled;
+      }
     });
 
     window.addEventListener('keyup', (e) => {
@@ -140,7 +188,7 @@ export class FirstPersonController {
 
   private collidesAt(nx: number, ny: number, nz: number, state: WorldState): boolean {
     const pMinY = ny + 0.18;
-    const pMaxY = ny + 1.75;
+    const pMaxY = ny + (this.crouching ? 1.15 : 1.75);
 
     for (const box of ALL_COLLIDERS) {
       if (box.doorId && state.doors[box.doorId]) {
@@ -164,140 +212,180 @@ export class FirstPersonController {
   public update(
     dt: number,
     state: WorldState,
+    myPlayerId: string,
     world: BuiltWorld,
-    onUvFrameSpotted: (frameIndex: number) => void,
   ): { moved: boolean; moving: boolean } {
-    const clampedDt = Math.min(0.08, dt);
-    let moving = false;
+    const clampedDt = Math.min(0.05, dt);
+
+    // Keep interactable raycast map synced when dropped items spawn/despawn
+    const currentVer = world.interactablesVersion ?? world.interactables.length;
+    if (currentVer !== this.lastInteractablesVersion) {
+      this.reindexInteractables(world);
+    }
+
+    let wantForward = 0;
+    let wantStrafe = 0;
+    let holdCrouch = false;
+    let wantSprint = false;
 
     if (!this.canMove() || isTypingTarget(document.activeElement)) {
       this.keys.clear();
     } else {
-      let forward = 0;
-      let strafe = 0;
-      if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) forward += 1;
-      if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) forward -= 1;
-      if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) strafe += 1;
-      if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) strafe -= 1;
+      if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) wantForward += 1;
+      if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) wantForward -= 1;
+      if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) wantStrafe += 1;
+      if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) wantStrafe -= 1;
+      holdCrouch = this.keys.has('ControlLeft') || this.keys.has('ControlRight');
+      wantSprint = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
+    }
 
-      const len = Math.hypot(forward, strafe);
-      if (len > 0) {
-        moving = true;
-        forward /= len;
-        strafe /= len;
-        const speed = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') ? SPRINT_SPEED : WALK_SPEED;
+    this.crouching = holdCrouch || this.crouchToggled;
+    const targetEye = this.crouching ? EYE_HEIGHT_CROUCH : EYE_HEIGHT_STAND;
+    this.eyeHeight += (targetEye - this.eyeHeight) * (1 - Math.exp(-14 * clampedDt));
 
-        // Forward vector in Three.js camera yaw convention: (-sin(yaw), -cos(yaw))
-        const fx = -Math.sin(this.yaw);
-        const fz = -Math.cos(this.yaw);
-        const rx = Math.cos(this.yaw);
-        const rz = -Math.sin(this.yaw);
+    const inputLen = Math.hypot(wantForward, wantStrafe);
+    let targetVx = 0;
+    let targetVz = 0;
+    const maxSpeed = this.crouching
+      ? CROUCH_SPEED
+      : wantSprint
+        ? SPRINT_SPEED
+        : WALK_SPEED;
 
-        const vx = (fx * forward + rx * strafe) * speed * clampedDt;
-        const vz = (fz * forward + rz * strafe) * speed * clampedDt;
+    if (inputLen > 0) {
+      const nf = wantForward / inputLen;
+      const ns = wantStrafe / inputLen;
+      // Forward vector in Three.js camera yaw convention: (-sin(yaw), -cos(yaw))
+      const fx = -Math.sin(this.yaw);
+      const fz = -Math.cos(this.yaw);
+      const rx = Math.cos(this.yaw);
+      const rz = -Math.sin(this.yaw);
+      targetVx = (fx * nf + rx * ns) * maxSpeed;
+      targetVz = (fz * nf + rz * ns) * maxSpeed;
+    }
 
-        // If a closing door (e.g. Tea North Grille) ever closed on top of the player,
-        // smoothly nudge them out to the nearest clear side so they can never be trapped!
-        if (this.collidesAt(this.x, this.y, this.z, state)) {
-          const offsets = [
-            [0.45, 0],
-            [-0.45, 0],
-            [0, 0.45],
-            [0, -0.45],
-            [0.9, 0],
-            [-0.9, 0],
-            [0, 0.9],
-            [0, -0.9],
-          ];
-          for (const [ox, oz] of offsets) {
-            const ny = computeFloorHeight(this.x + ox, this.y, this.z + oz);
-            if (!this.collidesAt(this.x + ox, ny, this.z + oz, state)) {
-              this.x += ox;
-              this.z += oz;
-              this.y = ny;
-              break;
-            }
-          }
+    // Smooth exponential velocity inertia (zero sudden jerks on keydown/keyup!)
+    const accelRate = this.grounded ? (inputLen > 0 ? 15 : 18) : 5.5;
+    const blend = 1 - Math.exp(-accelRate * clampedDt);
+    this.vx += (targetVx - this.vx) * blend;
+    this.vz += (targetVz - this.vz) * blend;
+
+    const horizSpeed = Math.hypot(this.vx, this.vz);
+    if (inputLen === 0 && horizSpeed < 0.02) {
+      this.vx = 0;
+      this.vz = 0;
+    }
+
+    const moving = horizSpeed > 0.15;
+
+    // If a closing door (e.g. Tea North Grille) ever closed on top of the player,
+    // smoothly nudge them out to the nearest clear side so they can never be trapped!
+    if (this.collidesAt(this.x, this.y, this.z, state)) {
+      const offsets = [
+        [0.45, 0],
+        [-0.45, 0],
+        [0, 0.45],
+        [0, -0.45],
+        [0.9, 0],
+        [-0.9, 0],
+        [0, 0.9],
+        [0, -0.9],
+      ];
+      for (const [ox, oz] of offsets) {
+        const ny = computeFloorHeight(this.x + ox, this.y, this.z + oz);
+        if (!this.collidesAt(this.x + ox, ny, this.z + oz, state)) {
+          this.x += ox;
+          this.z += oz;
+          this.y = ny;
+          break;
         }
+      }
+    }
 
-        // Axis-separated collision resolution for buttery wall sliding!
-        const tryX = this.x + vx;
-        const nextYX = computeFloorHeight(tryX, this.y, this.z);
-        if (!this.collidesAt(tryX, nextYX, this.z, state)) {
-          this.x = tryX;
-          this.y = nextYX;
-        }
+    // Axis-separated horizontal collision resolution (no vertical snap!)
+    const dx = this.vx * clampedDt;
+    const dz = this.vz * clampedDt;
 
-        const tryZ = this.z + vz;
-        const nextYZ = computeFloorHeight(this.x, this.y, tryZ);
-        if (!this.collidesAt(this.x, nextYZ, tryZ, state)) {
-          this.z = tryZ;
-          this.y = nextYZ;
-        }
+    if (Math.abs(dx) > 1e-6) {
+      const tryX = this.x + dx;
+      const checkYX = Math.max(this.y, computeFloorHeight(tryX, this.y, this.z));
+      if (!this.collidesAt(tryX, checkYX, this.z, state)) {
+        this.x = tryX;
+      } else {
+        this.vx = 0;
+      }
+    }
 
-        // Smooth elevation update & footsteps
-        const targetY = computeFloorHeight(this.x, this.y, this.z);
-        this.y += (targetY - this.y) * Math.min(1, clampedDt * 18);
+    if (Math.abs(dz) > 1e-6) {
+      const tryZ = this.z + dz;
+      const checkYZ = Math.max(this.y, computeFloorHeight(this.x, this.y, tryZ));
+      if (!this.collidesAt(this.x, checkYZ, tryZ, state)) {
+        this.z = tryZ;
+      } else {
+        this.vz = 0;
+      }
+    }
 
-        this.bobTimer += clampedDt * (speed > 5 ? 11.5 : 8.5);
-        this.stepAccum += Math.hypot(vx, vz);
-        const stride = speed > 5 ? 2.15 : 1.85;
-        if (this.stepAccum >= stride) {
-          this.stepAccum = 0;
+    // Vertical physics: smooth ramp tracking + Jump & Gravity
+    const floorY = computeFloorHeight(this.x, this.y, this.z);
+    if (this.grounded) {
+      this.coyoteTimer = 0.1;
+      if (floorY < this.y - 0.35) {
+        // Stepped off an edge
+        this.grounded = false;
+      } else {
+        this.y += (floorY - this.y) * (1 - Math.exp(-22 * clampedDt));
+      }
+    } else {
+      this.coyoteTimer = Math.max(0, this.coyoteTimer - clampedDt);
+      this.vy -= GRAVITY * clampedDt;
+      this.y += this.vy * clampedDt;
+      if (this.y <= floorY) {
+        const impactVy = this.vy;
+        this.y = floorY;
+        this.vy = 0;
+        this.grounded = true;
+        if (impactVy < -2.4) {
           this.onFootstep(this.currentZone.material);
         }
       }
     }
 
+    // Smoothly damped head-bob (never snaps abruptly to 0 on key release!)
+    const speedRatio = this.grounded ? Math.min(1.25, horizSpeed / WALK_SPEED) : 0;
+    const bobBlend = 1 - Math.exp(-(speedRatio > 0.05 ? 10 : 12) * clampedDt);
+    this.bobAmp += (speedRatio - this.bobAmp) * bobBlend;
+    if (speedRatio > 0.05) {
+      const freq = this.crouching ? 6.5 : horizSpeed > 5.2 ? 11.0 : 8.4;
+      this.bobTimer += clampedDt * freq;
+      this.stepAccum += horizSpeed * clampedDt;
+      const stride = this.crouching ? 1.55 : horizSpeed > 5.2 ? 2.15 : 1.85;
+      if (this.stepAccum >= stride) {
+        this.stepAccum = 0;
+        this.onFootstep(this.currentZone.material);
+      }
+    }
+
     this.currentZone = detectZone(this.x, this.y, this.z);
-    const bobOffset = moving ? Math.sin(this.bobTimer) * 0.042 : 0;
+    const bobOffset = Math.sin(this.bobTimer) * 0.032 * this.bobAmp;
     this.applyCameraTransform(bobOffset);
 
-    // Update local UV spotlight attached to camera
-    const hasUvTool = state.inventory.includes('tool_uv_lamp');
+    // Update local UV spotlight attached to camera (checks THIS player's personal inventory!)
+    const me = state.players[myPlayerId];
+    const hasUvTool = !!me?.inventory.includes('tool_uv_lamp');
     if (!hasUvTool && this.uvOn) {
       this.uvOn = false;
     }
     world.setLocalUvLight(this.camera, this.uvOn && hasUvTool);
 
-    // Check if UV lamp beam is illuminating any Study UV painting!
-    if (this.uvOn && hasUvTool) {
-      const camPos = this.camera.position;
-      const camDir = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion).normalize();
-      for (const frame of world.uvFrames) {
-        if (state.puzzles.uvRevealedFrames.includes(frame.index)) continue;
-        const toFrame = frame.worldPos.clone().sub(camPos);
-        const dist = toFrame.length();
-        if (dist <= 7.0) {
-          toFrame.normalize();
-          if (
-            camDir.dot(toFrame) > 0.72 &&
-            !isLineOfSightBlocked(
-              camPos.x,
-              camPos.y,
-              camPos.z,
-              toFrame.x,
-              toFrame.y,
-              toFrame.z,
-              dist,
-              state.doors,
-              LOS_DECOR_OCCLUDERS,
-            )
-          ) {
-            onUvFrameSpotted(frame.index);
-          }
-        }
-      }
-    }
-
     // Raycast interactables from screen center
     this.updateInteractTarget(state, world);
 
-    return { moved: moving, moving };
+    return { moved: moving || !this.grounded, moving };
   }
 
   private applyCameraTransform(bobOffset: number): void {
-    this.camera.position.set(this.x, this.y + EYE_HEIGHT + bobOffset, this.z);
+    this.camera.position.set(this.x, this.y + this.eyeHeight + bobOffset, this.z);
     this.camera.rotation.order = 'YXZ';
     this.camera.rotation.y = this.yaw;
     this.camera.rotation.x = this.pitch;
@@ -379,6 +467,7 @@ export class FirstPersonController {
       yaw: Math.round(this.yaw * 1000) / 1000,
       pitch: Math.round(this.pitch * 1000) / 1000,
       moving,
+      crouching: this.crouching,
       zone: this.currentZone.id,
       uvOn: this.uvOn,
       heldItem: this.heldItem,

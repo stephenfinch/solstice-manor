@@ -5,7 +5,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
-import { ClientMessage, ServerMessage } from '../shared/types.js';
+import { ClientMessage, HintMode, ServerMessage } from '../shared/types.js';
 import { GameRoom } from './roomManager.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -46,7 +46,7 @@ interface ClientSocket extends WebSocket {
 const rooms = new Map<string, GameRoom>();
 const roomSockets = new Map<string, Set<ClientSocket>>();
 
-function createRoom(): GameRoom {
+function createRoom(hintMode: HintMode = 'oracle'): GameRoom {
   let code = generateRoomCode();
   while (rooms.has(code)) {
     code = generateRoomCode();
@@ -54,24 +54,28 @@ function createRoom(): GameRoom {
   const sockets = new Set<ClientSocket>();
   roomSockets.set(code, sockets);
 
-  const room = new GameRoom(code, {
-    broadcast: (msg: ServerMessage, excludePlayerId?: string) => {
-      const payload = JSON.stringify(msg);
-      for (const ws of sockets) {
-        if (ws.readyState === WebSocket.OPEN && ws.playerId !== excludePlayerId) {
-          ws.send(payload);
+  const room = new GameRoom(
+    code,
+    {
+      broadcast: (msg: ServerMessage, excludePlayerId?: string) => {
+        const payload = JSON.stringify(msg);
+        for (const ws of sockets) {
+          if (ws.readyState === WebSocket.OPEN && ws.playerId !== excludePlayerId) {
+            ws.send(payload);
+          }
         }
-      }
-    },
-    sendTo: (playerId: string, msg: ServerMessage) => {
-      const payload = JSON.stringify(msg);
-      for (const ws of sockets) {
-        if (ws.readyState === WebSocket.OPEN && ws.playerId === playerId) {
-          ws.send(payload);
+      },
+      sendTo: (playerId: string, msg: ServerMessage) => {
+        const payload = JSON.stringify(msg);
+        for (const ws of sockets) {
+          if (ws.readyState === WebSocket.OPEN && ws.playerId === playerId) {
+            ws.send(payload);
+          }
         }
-      }
+      },
     },
-  });
+    hintMode,
+  );
   room.startLoop();
   rooms.set(code, room);
   return room;
@@ -150,8 +154,8 @@ wss.on('connection', (ws: ClientSocket) => {
     }
 
     if (msg.type === 'create_room') {
-      const room = createRoom();
-      const player = room.addOrReconnectPlayer(msg.playerName);
+      const room = createRoom(msg.hintMode);
+      const player = room.addOrReconnectPlayer(msg.playerName, undefined, msg.appearance);
       if (!player) {
         send(ws, { type: 'error', message: 'Failed to create room.' });
         return;
@@ -177,7 +181,7 @@ wss.on('connection', (ws: ClientSocket) => {
         send(ws, { type: 'error', message: `Room "${code}" not found on this LAN server.` });
         return;
       }
-      const player = room.addOrReconnectPlayer(msg.playerName, msg.playerId);
+      const player = room.addOrReconnectPlayer(msg.playerName, msg.playerId, msg.appearance);
       if (!player) {
         send(ws, {
           type: 'error',
@@ -196,7 +200,7 @@ wss.on('connection', (ws: ClientSocket) => {
         playerSlot: player.slot,
         state: room.getSanitizedState(),
       });
-      room.emitEvent('info', `✨ ${player.name} (Apprentice ${player.slot}) joined Solstice Manor!`, 'pickup');
+      room.emitEvent('info', `${player.name} joined Solstice Manor.`, 'pickup');
       room.syncAll();
       return;
     }
@@ -206,6 +210,9 @@ wss.on('connection', (ws: ClientSocket) => {
     if (!room) return;
 
     switch (msg.type) {
+      case 'update_appearance':
+        room.handleUpdateAppearance(ws.playerId, msg.appearance);
+        break;
       case 'player_move':
         room.updatePlayerTransform(ws.playerId, msg.transform);
         break;
@@ -214,6 +221,12 @@ wss.on('connection', (ws: ClientSocket) => {
         break;
       case 'pickup_item':
         room.handlePickup(ws.playerId, msg.itemId);
+        break;
+      case 'give_or_drop_item':
+        room.handleGiveOrDropItem(ws.playerId, msg.itemId, msg.mode, msg.x, msg.y, msg.z);
+        break;
+      case 'toggle_prop':
+        room.handleToggleProp(ws.playerId, msg.propId);
         break;
       case 'unlock_door':
         room.handleUnlockDoor(ws.playerId, msg.doorId);
@@ -229,6 +242,9 @@ wss.on('connection', (ws: ClientSocket) => {
         break;
       case 'coop_ping':
         room.handleCoopPing(ws.playerId, msg.x, msg.y, msg.z);
+        break;
+      case 'request_unlimited_hint':
+        room.handleRequestUnlimitedHint(ws.playerId, msg.targetPuzzleId);
         break;
       case 'minigame_ready':
         room.handleMinigameReady(ws.playerId, msg.targetPuzzleId);

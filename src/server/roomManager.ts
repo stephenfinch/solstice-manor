@@ -3,7 +3,10 @@ import {
   CipherSymbol,
   DoorId,
   HarpColor,
+  HatStyle,
+  HintMode,
   ItemId,
+  PlayerAppearance,
   PlayerInfo,
   PlayerSlot,
   PlayerTransform,
@@ -25,7 +28,36 @@ import {
   createIdleMinigameState,
   MinigameRunner,
   sanitizeMinigameForClient,
+  selectNextHint,
 } from './minigameEngine.js';
+
+const VALID_HATS = new Set<HatStyle>(['tophat', 'beret', 'aviator', 'none']);
+const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+
+function defaultAppearance(slot: PlayerSlot): PlayerAppearance {
+  return slot === 1
+    ? { coatColor: '#2c6e58', hatStyle: 'tophat', goggleColor: '#f5b942' }
+    : { coatColor: '#7d3448', hatStyle: 'beret', goggleColor: '#6ec5e9' };
+}
+
+function sanitizeAppearance(
+  input: Partial<PlayerAppearance> | undefined,
+  fallback: PlayerAppearance,
+): PlayerAppearance {
+  if (!input) return { ...fallback };
+  return {
+    coatColor:
+      typeof input.coatColor === 'string' && HEX_COLOR_RE.test(input.coatColor)
+        ? input.coatColor
+        : fallback.coatColor,
+    hatStyle:
+      input.hatStyle && VALID_HATS.has(input.hatStyle) ? input.hatStyle : fallback.hatStyle,
+    goggleColor:
+      typeof input.goggleColor === 'string' && HEX_COLOR_RE.test(input.goggleColor)
+        ? input.goggleColor
+        : fallback.goggleColor,
+  };
+}
 
 export interface BroadcastHooks {
   broadcast: (msg: ServerMessage, excludePlayerId?: string) => void;
@@ -73,18 +105,25 @@ export class GameRoom {
   private lastTickAt = Date.now();
   private debugUnlocked = false;
 
-  constructor(roomCode: string, hooks: BroadcastHooks) {
+  constructor(roomCode: string, hooks: BroadcastHooks, hintMode: HintMode = 'oracle') {
     this.hooks = hooks;
+    const validHintMode: HintMode =
+      hintMode === 'unlimited' || hintMode === 'none' ? hintMode : 'oracle';
     this.state = {
       roomCode,
+      hintMode: validHintMode,
       startedAt: Date.now(),
       completedAt: null,
       players: {},
       doors: createInitialDoors(),
       solvedPuzzles: createInitialSolved(),
       inventory: [],
+      droppedItems: [],
       collectedWorldItems: [],
       consumedKeys: [],
+      props: {
+        prop_study_lamp: true,
+      },
       puzzles: createInitialPuzzleStates(),
       discoveredClues: [],
       unlockedHints: [],
@@ -95,6 +134,20 @@ export class GameRoom {
       minigame: createIdleMinigameState(),
       pings: [],
     };
+  }
+
+  private syncTeamInventory(): void {
+    const union: ItemId[] = [];
+    for (const p of Object.values(this.state.players)) {
+      for (const item of p.inventory) {
+        if (!union.includes(item)) union.push(item);
+      }
+    }
+    this.state.inventory = union;
+  }
+
+  private findPartner(playerId: string): PlayerInfo | undefined {
+    return Object.values(this.state.players).find((p) => p.id !== playerId && p.connected);
   }
 
   public startLoop(): void {
@@ -130,7 +183,11 @@ export class GameRoom {
     this.hooks.broadcast({ type: 'world_event', event, message, sfx, data });
   }
 
-  public addOrReconnectPlayer(playerName: string, requestedPlayerId?: string): PlayerInfo | null {
+  public addOrReconnectPlayer(
+    playerName: string,
+    requestedPlayerId?: string,
+    requestedAppearance?: Partial<PlayerAppearance>,
+  ): PlayerInfo | null {
     const cleanName = (playerName || 'Apprentice').trim().slice(0, 18) || 'Apprentice';
 
     // Try reconnect by id
@@ -138,6 +195,9 @@ export class GameRoom {
       const existing = this.state.players[requestedPlayerId];
       existing.connected = true;
       existing.name = cleanName;
+      if (requestedAppearance) {
+        existing.appearance = sanitizeAppearance(requestedAppearance, existing.appearance);
+      }
       return existing;
     }
 
@@ -146,6 +206,9 @@ export class GameRoom {
     if (disconnected) {
       disconnected.connected = true;
       disconnected.name = cleanName;
+      if (requestedAppearance) {
+        disconnected.appearance = sanitizeAppearance(requestedAppearance, disconnected.appearance);
+      }
       return disconnected;
     }
 
@@ -165,6 +228,8 @@ export class GameRoom {
       name: cleanName,
       connected: true,
       color: slot === 1 ? '#f5b942' : '#4ecdc4',
+      appearance: sanitizeAppearance(requestedAppearance, defaultAppearance(slot)),
+      inventory: [],
       transform: {
         x: spawn.x,
         y: spawn.y,
@@ -172,6 +237,7 @@ export class GameRoom {
         yaw: spawn.yaw,
         pitch: 0,
         moving: false,
+        crouching: false,
         zone: 'foyer',
         uvOn: false,
         heldItem: null,
@@ -179,6 +245,13 @@ export class GameRoom {
     };
     this.state.players[id] = player;
     return player;
+  }
+
+  public handleUpdateAppearance(playerId: string, appearance: Partial<PlayerAppearance>): void {
+    const p = this.state.players[playerId];
+    if (!p) return;
+    p.appearance = sanitizeAppearance(appearance, p.appearance);
+    this.syncAll();
   }
 
   public disconnectPlayer(playerId: string): void {
@@ -291,10 +364,31 @@ export class GameRoom {
     return changed;
   }
 
-  // === PICKUP WORLD ITEMS ===
+  // === PICKUP WORLD OR DROPPED ITEMS (SEPARATE PERSONAL INVENTORIES) ===
   public handlePickup(playerId: string, itemId: ItemId): void {
-    if (!this.state.players[playerId]) return;
+    const player = this.state.players[playerId];
+    if (!player) return;
     if (!ITEMS[itemId]) return;
+
+    const def = ITEMS[itemId];
+
+    // 1. Check if picking up a partner-dropped item in the 3D world
+    const dropIdx = this.state.droppedItems.findIndex((d) => d.itemId === itemId);
+    if (dropIdx !== -1) {
+      this.state.droppedItems.splice(dropIdx, 1);
+      if (!player.inventory.includes(itemId)) {
+        player.inventory.push(itemId);
+      }
+      this.syncTeamInventory();
+      this.emitEvent('item_picked', `${player.name} picked up ${def.name}.`, 'pickup', {
+        itemId,
+        playerId,
+      });
+      this.syncAll();
+      return;
+    }
+
+    // 2. Otherwise pick up original world spawn item
     if (this.state.collectedWorldItems.includes(itemId)) return;
 
     // Ensure prerequisite puzzle unlocked this item!
@@ -309,15 +403,196 @@ export class GameRoom {
     }
 
     this.state.collectedWorldItems.push(itemId);
-    this.state.inventory.push(itemId);
+    if (!player.inventory.includes(itemId)) {
+      player.inventory.push(itemId);
+    }
+    this.syncTeamInventory();
 
-    const def = ITEMS[itemId];
     this.emitEvent(
       'item_picked',
-      `Picked up ${def.name}${def.consumable && def.category === 'key' ? ' (single-use)' : !def.consumable ? ' (reusable)' : ''}.`,
+      `${player.name} picked up ${def.name}${def.consumable && def.category === 'key' ? ' (single-use)' : !def.consumable ? ' (reusable)' : ''}.`,
       'pickup',
-      { itemId },
+      { itemId, playerId },
     );
+    this.syncAll();
+  }
+
+  // === HAND ITEM TO PARTNER OR DROP INTO 3D WORLD ===
+  public handleGiveOrDropItem(
+    playerId: string,
+    itemId: ItemId,
+    mode: 'partner' | 'drop',
+    x?: number,
+    y?: number,
+    z?: number,
+  ): void {
+    const player = this.state.players[playerId];
+    if (!player || !ITEMS[itemId]) return;
+    const invIdx = player.inventory.indexOf(itemId);
+    if (invIdx === -1) return;
+
+    player.inventory.splice(invIdx, 1);
+    if (player.transform.heldItem === itemId) {
+      player.transform.heldItem = null;
+    }
+    if (itemId === 'tool_uv_lamp') {
+      player.transform.uvOn = false;
+    }
+
+    const def = ITEMS[itemId];
+
+    if (mode === 'partner') {
+      const partner = this.findPartner(playerId);
+      if (partner) {
+        if (!partner.inventory.includes(itemId)) {
+          partner.inventory.push(itemId);
+        }
+        this.syncTeamInventory();
+        this.emitEvent(
+          'item_picked',
+          `${player.name} handed ${def.name} to ${partner.name}.`,
+          'pickup',
+          { itemId, from: player.slot, to: partner.slot },
+        );
+        this.syncAll();
+        return;
+      }
+    }
+
+    // Drop into 3D world in front of player (or fallback if partner isn't connected)
+    const fx = -Math.sin(player.transform.yaw);
+    const fz = -Math.cos(player.transform.yaw);
+    const dropX = typeof x === 'number' && Number.isFinite(x) ? x : player.transform.x + fx * 1.1;
+    const dropY = typeof y === 'number' && Number.isFinite(y) ? y : player.transform.y;
+    const dropZ = typeof z === 'number' && Number.isFinite(z) ? z : player.transform.z + fz * 1.1;
+
+    this.state.droppedItems.push({
+      itemId,
+      x: Math.round(dropX * 1000) / 1000,
+      y: Math.round(dropY * 1000) / 1000,
+      z: Math.round(dropZ * 1000) / 1000,
+      droppedBy: player.slot,
+    });
+    this.syncTeamInventory();
+    this.emitEvent('info', `${player.name} set down ${def.name}.`, 'dial_click', { itemId });
+    this.syncAll();
+  }
+
+  // === INTERACTIVE EXPLORATION PROPS (DRAWERS, LAMPS, BELLS, GLOBES, WHISTLES) ===
+  public handleToggleProp(playerId: string, propId: string): void {
+    const player = this.state.players[playerId];
+    if (!player || !propId) return;
+
+    const toggleBool = (): boolean => {
+      const next = !Boolean(this.state.props[propId]);
+      this.state.props[propId] = next;
+      return next;
+    };
+    const bumpCount = (): number => {
+      const next = (Number(this.state.props[propId]) || 0) + 1;
+      this.state.props[propId] = next;
+      return next;
+    };
+
+    switch (propId) {
+      case 'prop_foyer_drawer_1': {
+        const open = toggleBool();
+        this.emitEvent('sfx', '', open ? 'door_open' : 'dial_click');
+        break;
+      }
+      case 'prop_foyer_drawer_2': {
+        toggleBool();
+        this.emitEvent('sfx', '', 'dial_click');
+        break;
+      }
+      case 'prop_foyer_bell': {
+        bumpCount();
+        this.emitEvent('info', `${player.name} rang the brass foyer bell.`, 'ping');
+        break;
+      }
+      case 'prop_study_drawer': {
+        const open = toggleBool();
+        this.emitEvent('sfx', '', open ? 'door_open' : 'dial_click');
+        break;
+      }
+      case 'prop_study_book': {
+        const pulled = toggleBool();
+        this.emitEvent('sfx', '', pulled ? 'lever_pull' : 'dial_click');
+        break;
+      }
+      case 'prop_study_lamp': {
+        toggleBool();
+        this.emitEvent('sfx', '', 'dial_click');
+        break;
+      }
+      case 'prop_study_globe': {
+        bumpCount();
+        this.emitEvent('sfx', '', 'gear_place');
+        break;
+      }
+      case 'prop_fountain_coin': {
+        bumpCount();
+        this.emitEvent('info', 'A copper coin splashes into the sunlit basin.', 'valve_turn');
+        break;
+      }
+      case 'prop_courtyard_chimes': {
+        bumpCount();
+        this.emitEvent('sfx', '', 'harp_amber');
+        break;
+      }
+      case 'prop_tea_kettle': {
+        bumpCount();
+        this.emitEvent('info', 'The kettle puffs a fragrant cloud of jasmine steam.', 'oracle_miss');
+        break;
+      }
+      case 'prop_tea_cabinet': {
+        const open = toggleBool();
+        this.emitEvent('sfx', '', open ? 'door_open' : 'dial_click');
+        break;
+      }
+      case 'prop_speaking_tube': {
+        bumpCount();
+        this.emitEvent(
+          'coop_prompt',
+          `${player.name} whistled through the brass speaking tube!`,
+          'ping',
+        );
+        break;
+      }
+      case 'prop_cons_mist': {
+        const on = toggleBool();
+        this.emitEvent(
+          'info',
+          on ? 'Glasshouse misting sprayers hiss softly.' : 'Glasshouse misting sprayers shut off.',
+          'valve_turn',
+        );
+        break;
+      }
+      case 'prop_ws_whistle': {
+        bumpCount();
+        this.emitEvent('coop_prompt', `${player.name} blew the workshop steam whistle!`, 'valve_turn');
+        break;
+      }
+      case 'prop_ws_chime': {
+        bumpCount();
+        this.emitEvent('sfx', '', 'harp_emerald');
+        break;
+      }
+      case 'prop_obs_spyglass': {
+        bumpCount();
+        this.emitEvent(
+          'info',
+          'Through the brass spyglass: golden windmills turning across sunlit hills.',
+          'mirror_rotate',
+        );
+        break;
+      }
+      default: {
+        toggleBool();
+        this.emitEvent('sfx', '', 'dial_click');
+        break;
+      }
+    }
     this.syncAll();
   }
 
@@ -357,33 +632,35 @@ export class GameRoom {
 
     const requiredKey = DOOR_KEY_REQUIREMENTS[doorId];
     if (requiredKey) {
-      const keyIdx = this.state.inventory.indexOf(requiredKey);
+      const keyIdx = player.inventory.indexOf(requiredKey);
       if (keyIdx === -1) {
         const keyDef = ITEMS[requiredKey];
+        const partner = this.findPartner(playerId);
+        const partnerHas = partner?.inventory.includes(requiredKey);
         this.hooks.sendTo(playerId, {
           type: 'world_event',
           event: 'error',
-          message: `Locked! Requires the ${keyDef.name}.`,
+          message: partnerHas
+            ? `${partner!.name} carries the ${keyDef.name} — ask them to pass it [G] or unlock it.`
+            : `Locked! Requires the ${keyDef.name}.`,
           sfx: 'error',
         });
         return;
       }
 
       // CONSUME KEY (one-and-done!)
-      this.state.inventory.splice(keyIdx, 1);
+      player.inventory.splice(keyIdx, 1);
       this.state.consumedKeys.push(requiredKey);
-      // Clear heldItem if any player was holding this consumed key
-      for (const p of Object.values(this.state.players)) {
-        if (p.transform.heldItem === requiredKey) {
-          p.transform.heldItem = null;
-        }
+      if (player.transform.heldItem === requiredKey) {
+        player.transform.heldItem = null;
       }
+      this.syncTeamInventory();
       this.state.doors[doorId] = true;
 
       const keyDef = ITEMS[requiredKey];
       this.emitEvent(
         'key_consumed',
-        `Unlocked with ${keyDef.name} (key consumed).`,
+        `${player.name} unlocked with ${keyDef.name} (key consumed).`,
         'key_unlock',
         { doorId, keyId: requiredKey },
       );
@@ -448,15 +725,18 @@ export class GameRoom {
     this.state.doors.workshop_door = true;
     this.state.doors.skylift_door = true;
 
-    // Grant reusable exploration tools if not yet held so every room can be tested freely
+    // Grant reusable exploration tools to every player's personal inventory for testing
     for (const tool of ['tool_uv_lamp', 'tool_prism'] as const) {
-      if (!this.state.inventory.includes(tool)) {
-        this.state.inventory.push(tool);
+      for (const p of Object.values(this.state.players)) {
+        if (!p.inventory.includes(tool)) {
+          p.inventory.push(tool);
+        }
       }
       if (!this.state.collectedWorldItems.includes(tool)) {
         this.state.collectedWorldItems.push(tool);
       }
     }
+    this.syncTeamInventory();
 
     this.emitEvent('info', 'Debug: all doors unlocked & tools granted.', 'door_open');
     this.syncAll();
@@ -680,11 +960,15 @@ export class GameRoom {
           this.emitEvent('sfx', '', 'mirror_rotate');
           return;
         }
-        if (!this.state.inventory.includes('tool_prism')) {
+        if (!player.inventory.includes('tool_prism')) {
+          const partner = this.findPartner(playerId);
+          const partnerHas = partner?.inventory.includes('tool_prism');
           this.hooks.sendTo(playerId, {
             type: 'world_event',
             event: 'error',
-            message: 'An empty optical socket — something is missing.',
+            message: partnerHas
+              ? `${partner!.name} carries the Crystal Prism — ask them to pass it [G] or insert it.`
+              : 'An empty optical socket — something is missing.',
             sfx: 'error',
           });
           return;
@@ -758,12 +1042,16 @@ export class GameRoom {
         if (solved.p9_gear_train) return;
         const slots = payload.slots as (string | null)[];
         if (!Array.isArray(slots) || slots.length !== 3) return;
-        // Validate 18T gear cannot be mounted unless collected!
-        if (slots.includes('18') && !this.state.collectedWorldItems.includes('item_gear_18t')) {
+        // Validate 18T gear cannot be mounted unless this player carries it!
+        if (slots.includes('18') && !player.inventory.includes('item_gear_18t')) {
+          const partner = this.findPartner(playerId);
+          const partnerHas = partner?.inventory.includes('item_gear_18t');
           this.hooks.sendTo(playerId, {
             type: 'world_event',
             event: 'error',
-            message: 'Missing the 18-tooth gear.',
+            message: partnerHas
+              ? `${partner!.name} carries the 18-Tooth Gear — ask them to pass it [G].`
+              : 'Missing the 18-tooth gear.',
             sfx: 'error',
           });
           return;
@@ -771,9 +1059,11 @@ export class GameRoom {
         pz.gearSlots = [slots[0] ?? null, slots[1] ?? null, slots[2] ?? null];
         if (pz.gearSlots.every((g, i) => g === SOLUTIONS.p9_gears[i])) {
           solved.p9_gear_train = true;
-          // Consume item_gear_18t from inventory since it's mounted in the machine!
-          const gIdx = this.state.inventory.indexOf('item_gear_18t');
-          if (gIdx !== -1) this.state.inventory.splice(gIdx, 1);
+          // Consume item_gear_18t from acting player's inventory since it's mounted in the machine!
+          const gIdx = player.inventory.indexOf('item_gear_18t');
+          if (gIdx !== -1) player.inventory.splice(gIdx, 1);
+          if (player.transform.heldItem === 'item_gear_18t') player.transform.heldItem = null;
+          this.syncTeamInventory();
           this.emitEvent('puzzle_solved', 'The gear train hums to life.', 'puzzle_solved');
         } else {
           this.emitEvent('sfx', '', 'gear_place');
@@ -898,17 +1188,23 @@ export class GameRoom {
         const itemId = `core_${core}` as ItemId;
         if (!['sun', 'gear', 'star', 'wind'].includes(core)) return;
         if (pz.gateCoresInserted[core]) return;
-        const invIdx = this.state.inventory.indexOf(itemId);
+        const invIdx = player.inventory.indexOf(itemId);
         if (invIdx === -1) {
+          const partner = this.findPartner(playerId);
+          const partnerHas = partner?.inventory.includes(itemId);
           this.hooks.sendTo(playerId, {
             type: 'world_event',
             event: 'error',
-            message: `You haven't recovered the ${ITEMS[itemId].name} yet!`,
+            message: partnerHas
+              ? `${partner!.name} carries the ${ITEMS[itemId].name} — ask them to pass it [G] or place it.`
+              : `You aren't carrying the ${ITEMS[itemId].name}.`,
             sfx: 'error',
           });
           return;
         }
-        this.state.inventory.splice(invIdx, 1);
+        player.inventory.splice(invIdx, 1);
+        if (player.transform.heldItem === itemId) player.transform.heldItem = null;
+        this.syncTeamInventory();
         pz.gateCoresInserted[core] = true;
         this.emitEvent(
           'info',
@@ -993,11 +1289,62 @@ export class GameRoom {
   }
 
   // ============================================================
-  // 2-PLAYER COOP HINT MINIGAME (CLOCKWORK ORACLE)
+  // HINT SYSTEM (UNLIMITED MODE + 2P CLOCKWORK ORACLE MINIGAME)
   // ============================================================
+  public handleRequestUnlimitedHint(playerId: string, targetPuzzleId?: PuzzleId): void {
+    const player = this.state.players[playerId];
+    if (!player) return;
+    if (this.state.hintMode !== 'unlimited') {
+      this.hooks.sendTo(playerId, {
+        type: 'world_event',
+        event: 'error',
+        message:
+          this.state.hintMode === 'none'
+            ? 'Hints are turned off for this session.'
+            : 'Use the Clockwork Oracle minigame to earn hints.',
+        sfx: 'error',
+      });
+      return;
+    }
+
+    const hint = selectNextHint(this.state, targetPuzzleId ?? null);
+    if (!hint) {
+      this.hooks.sendTo(playerId, {
+        type: 'world_event',
+        event: 'info',
+        message: 'Every mechanism in Solstice Manor is already solved.',
+        sfx: 'dial_click',
+      });
+      return;
+    }
+
+    this.state.unlockedHints.push(hint);
+    this.state.hintAttemptsCount += 1;
+    this.state.hintWinsCount += 1;
+    this.emitEvent(
+      'puzzle_solved',
+      `Hint unlocked: "${hint.puzzleTitle}" (Tier ${hint.tier}) — saved to Notebook.`,
+      'oracle_win',
+    );
+    this.syncAll();
+  }
+
   public handleMinigameReady(playerId: string, targetPuzzleId?: PuzzleId): void {
     const player = this.state.players[playerId];
     if (!player) return;
+    if (this.state.hintMode === 'none') {
+      this.hooks.sendTo(playerId, {
+        type: 'world_event',
+        event: 'error',
+        message: 'Hints are turned off for this session.',
+        sfx: 'error',
+      });
+      return;
+    }
+    if (this.state.hintMode === 'unlimited') {
+      this.handleRequestUnlimitedHint(playerId, targetPuzzleId);
+      return;
+    }
     const now = Date.now();
     const mg = this.state.minigame;
 

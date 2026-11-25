@@ -55,13 +55,21 @@ describe('Live LAN Server + 2-Client WebSocket Multiplayer Integration', () => {
     }
     expect(ready).toBe(true);
 
-    // Connect Player 1 & create room
+    // Connect Player 1 & create room with custom appearance
     const ws1 = new WebSocket(`ws://127.0.0.1:${TEST_PORT}/ws`);
     await new Promise((res) => ws1.once('open', res));
     const p1JoinedPromise = waitForMessage(ws1, (m) => m.type === 'room_joined');
-    ws1.send(JSON.stringify({ type: 'create_room', playerName: 'Apprentice One' }));
+    ws1.send(
+      JSON.stringify({
+        type: 'create_room',
+        playerName: 'Apprentice One',
+        hintMode: 'oracle',
+        appearance: { coatColor: '#2e4a73', hatStyle: 'aviator', goggleColor: '#f5b942' },
+      }),
+    );
     const p1Joined = (await p1JoinedPromise) as Extract<ServerMessage, { type: 'room_joined' }>;
     expect(p1Joined.playerSlot).toBe(1);
+    expect(p1Joined.state.players[p1Joined.playerId].appearance.hatStyle).toBe('aviator');
     const roomCode = p1Joined.roomCode;
 
     // Verify /api/info lists the active room for LAN discovery!
@@ -89,6 +97,15 @@ describe('Live LAN Server + 2-Client WebSocket Multiplayer Integration', () => {
     ws2.send(JSON.stringify({ type: 'interact', targetId: 'lever_foyer_right' }));
     const doorState = (await doorSync) as Extract<ServerMessage, { type: 'state_sync' }>;
     expect(doorState.state.doors.courtyard_door).toBe(true);
+
+    // Player 1 toggles Foyer Credenza Drawer -> Player 2 receives synced prop state!
+    const drawerSync = waitForMessage(
+      ws2,
+      (m) => m.type === 'state_sync' && m.state.props.prop_foyer_drawer_1 === true,
+    );
+    ws1.send(JSON.stringify({ type: 'toggle_prop', propId: 'prop_foyer_drawer_1' }));
+    const drawerState = (await drawerSync) as Extract<ServerMessage, { type: 'state_sync' }>;
+    expect(drawerState.state.props.prop_foyer_drawer_1).toBe(true);
 
     // Both players ready up for Clockwork Oracle Hint Minigame -> enters playing phase live!
     const mgStart = waitForMessage(ws2, (m) => m.type === 'state_sync' && m.state.minigame.phase === 'playing');

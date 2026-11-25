@@ -257,45 +257,49 @@ export const WORLD_CLUES: Record<string, ClueDefinition> = {
     id: 'clue_welcome_ledger',
     title: "Master Vance's Welcome Ledger",
     zone: 'Grand Foyer',
-    body: `Welcome, Apprentices!
-To pass my Solstice Induction Exam, recover the FOUR RESONANCE CORES (Sun, Gear, Star, Wind) across the estate and open the Grand Solstice Gate in the northern Sky-Garden.
+    body: `Welcome, Apprentices.
+Recover the four Resonance Cores across the estate to unseal the Grand Solstice Gate in the northern Sky-Garden.
 
-FIRST TRIAL — THE AWAKENING CLOCK:
-Dial the 4-digit morning time (A B : C D) into the Foyer Grandfather Clock:
-  1. All four digits (A, B, C, D) are DIFFERENT (no repeats).
-  2. The hour (AB) is between 01 and 11, and A + B = 9.
-  3. The minutes (CD) form a multiple of 7 greater than 30, and C + D = 8.
+THE AWAKENING CLOCK:
+My Grandfather Clock wakes the manor when set to my favorite morning hour:
+  • For the HOUR, count the golden rays woven around the Foyer sun rug.
+  • For the MINUTES, search the Foyer credenza drawers for my stopped pocket watch.
 
-Once the clock chimes, the Twin Courtyard Levers will energize. Pull BOTH levers simultaneously with your partner!`,
+Once the clock chimes, pull the twin entry levers together.`,
+  },
+
+  clue_foyer_pocket_watch: {
+    id: 'clue_foyer_pocket_watch',
+    title: 'Stopped Brass Pocket Watch',
+    zone: 'Grand Foyer (Credenza Drawer)',
+    body: `TUCKED INSIDE THE VELVET-LINED DRAWER:
+The short hour hand has snapped cleanly off, but the slender blued-steel minute hand is jammed solidly at 35 minutes past the hour (:35).`,
   },
 
   clue_tea_north_mural: {
     id: 'clue_tea_north_mural',
     title: 'North Booth Botanical Mural',
     zone: 'Tea Parlor (North Booth)',
-    body: `BOTANICAL GRID (Visible only from the North Booth!):
+    body: `BOTANICAL GRID (Visible only from the North Booth):
   Row A:  [A1: ☀ Sun]    [A2: 🌿 Leaf]  [A3: ⚙ Gear]
   Row B:  [B1: 🌙 Moon]  [B2: 🔔 Bell]  [B3: 💧 Drop]
   Row C:  [C1: ★ Star]   [C2: 🗝 Key]   [C3: 🪶 Feather]
 
-CALL THESE FOUR DIALS TO YOUR PARTNER THROUGH THE GLASS:
-  • Dial 1: The emblem directly SOUTH of the Sun.
-  • Dial 2: The emblem in the exact CENTER of the 3×3 grid.
-  • Dial 3: Start at the Key (C2), move 1 East, then 2 North.
-  • Dial 4: The corner emblem diagonally opposite the Gear.`,
+CALL THESE FOUR DIALS THROUGH THE GLASS:
+  • I:  Directly South of Sun  (☀ ↓)
+  • II: Exact center of the grid  (⊕)
+  • III: From Key, 1 East then 2 North  (🗝 → ↑ ↑)
+  • IV: Corner opposite the Gear  (⚙ ↙)`,
   },
 
   clue_tea_balance_plaque: {
     id: 'clue_tea_balance_plaque',
-    title: 'Apothecary Tea Blend Formula',
+    title: 'Apothecary Tea Blend',
     zone: 'Tea Parlor (South Booth)',
-    body: `MASTER VANCE'S MORNING BLEND (Set the 4 Brass Canisters):
-  • Amber + Jade = 15 grams
-  • Amber is exactly 3 grams heavier than Jade
-  • Rose is exactly twice as heavy as Mint
-  • All four canisters together weigh 33 grams
-
-(Tip: Press [C] anytime to open your Brass Mechanical Calculator!)`,
+    body: `THE MORNING BLEND (Watch the brass balance lamps as you weigh):
+  • Amber + Jade = 15g  (Amber is 3g heavier)
+  • Rose = twice Mint
+  • All four canisters = 33g total`,
   },
 
   clue_core_sun_cardinal: {
@@ -366,11 +370,34 @@ CALL THESE FOUR DIALS TO YOUR PARTNER THROUGH THE GLASS:
     id: 'clue_sundial_tablet',
     title: 'Equinox Sundial Stone Tablet',
     zone: 'Sunlit Courtyard',
-    body: `SOLSTICE COURTYARD SUNDIAL (Unlocks the Clockwork Workshop):
-Align the three concentric brass rings (Hour, Azimuth, Day — each 1 to 12):
-  1. Hour × Azimuth = 24
-  2. Hour is strictly greater than Azimuth, and BOTH are even numbers.
-  3. Day = Hour + Azimuth, and Day equals 10.`,
+    body: `THE THREE SUNDIAL RINGS (Search the estate — no guesswork needed):
+  • HOUR:     Sketched on a brass card inside the Study desk drawer.
+  • AZIMUTH:  Engraved on the brass rim of the Courtyard fountain basin.
+  • DAY:      Tucked inside a loose crimson almanac on the Study bookcase.`,
+  },
+
+  clue_study_drawer_sketch: {
+    id: 'clue_study_drawer_sketch',
+    title: 'Sundial Brass Sketch (Study Drawer)',
+    zone: "Alchemist's Study (Desk Drawer)",
+    body: `A CHARCOAL & GOLD-LEAF SKETCH TUCKED IN THE DESK DRAWER:
+"Courtyard Equinox Sundial — set the outer HOUR ring to VI (6)."`,
+  },
+
+  clue_fountain_rim: {
+    id: 'clue_fountain_rim',
+    title: 'Fountain Basin Engraving',
+    zone: 'Sunlit Courtyard (Fountain Rim)',
+    body: `ETCHED INTO THE MARBLE & BRASS FOUNTAIN RIM:
+"Four sunlit quadrants around the fountain — Courtyard Sundial AZIMUTH = 4."`,
+  },
+
+  clue_study_secret_book: {
+    id: 'clue_study_secret_book',
+    title: 'Hollow Almanac (Study Bookcase)',
+    zone: "Alchemist's Study (Bookcase)",
+    body: `SLIPPED INSIDE THE HOLLOWED-OUT ALMANAC:
+"Solstice Equinox — set the Courtyard Sundial DAY ring to 10."`,
   },
 
   clue_mirror_plaque: {
@@ -469,9 +496,9 @@ export const PUZZLE_HINTS: PuzzleHintTrack[] = [
     title: 'Grand Foyer Awakening Clock',
     order: 1,
     tiers: [
-      'Read Master Vance\'s Welcome Ledger on the Foyer lectern. Find a 2-digit hour between 01 and 11 whose digits sum to 9, and a minute value > 30 divisible by 7 whose digits sum to 8.',
-      'Only 09 has digits summing to 9 between 01 and 11 (0+9=9). For minutes > 30 divisible by 7 (35, 42, 49, 56), check which pair adds up to 8!',
-      'Set the Foyer Grandfather Clock dials to 09:35 (0, 9, 3, 5).',
+      'Read Master Vance\'s Welcome Ledger on the Foyer lectern, then look closely around the Foyer itself.',
+      'Count the golden triangular rays woven around the Foyer rug for the Hour, and open the Foyer credenza drawer to inspect the stopped pocket watch for the Minutes.',
+      'There are 9 golden rays on the Foyer rug and the pocket watch is stopped at :35 — set the clock to 09:35.',
     ],
   },
   {
@@ -529,8 +556,8 @@ export const PUZZLE_HINTS: PuzzleHintTrack[] = [
     title: 'Courtyard Equinox Sundial',
     order: 7,
     tiers: [
-      'Inspect the Stone Tablet beside the Courtyard Sundial. Find two EVEN numbers whose product is 24 and whose sum (Day) is 10.',
-      'The even factor pairs of 24 are (12, 2) and (6, 4). Only 6 + 4 = 10, and Hour must be greater than Azimuth.',
+      'Read the Stone Tablet beside the Courtyard Sundial — its three settings are hidden around the Courtyard and back inside the Alchemist\'s Study.',
+      'Open the desk drawer in the Alchemist\'s Study for the Hour sketch (6), inspect the Courtyard Fountain brass rim for Azimuth (4), and pull the loose book on the Study bookcase for Day (10).',
       'Set the Courtyard Sundial rings to: Hour = 6, Azimuth = 4, Day = 10 to unlock the Clockwork Workshop.',
     ],
   },

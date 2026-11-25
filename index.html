@@ -28,6 +28,74 @@
               <input id="player-name" type="text" maxlength="18" placeholder="Apprentice" value="" />
             </div>
 
+            <div class="lobby-customizer" role="group" aria-label="Apprentice look">
+              <svg class="look-preview" id="look-preview" viewBox="0 0 64 80" aria-hidden="true">
+                <path class="look-coat" d="M8 80c0-16 8-24 17-27l7 5 7-5c9 3 17 11 17 27z" />
+                <path class="look-lapel" d="M25 53l7 14 7-14M32 67v13" />
+                <circle class="look-brass" cx="32" cy="74" r="1.6" />
+                <path class="look-skin" d="M27 45h10v9l-5 5-5-5z" />
+                <circle class="look-skin" cx="32" cy="36" r="13" />
+                <path class="look-hair" d="M19 36c-1-10 5-16 13-16s14 6 13 16c-2-5-4-8-7-9-4 2-9 2-13 0-3 1-5 4-6 9z" />
+                <g class="look-hat look-hat-tophat">
+                  <path d="M22 5h20l-1.5 18h-17z" />
+                  <path d="M14 22c8 3.5 28 3.5 36 0v3c-8 4-28 4-36 0z" />
+                  <path class="look-band" d="M23.2 18h17.6l-.4 4.4c-5 1.2-12 1.2-16.8 0z" />
+                </g>
+                <g class="look-hat look-hat-beret">
+                  <path d="M16 25c-3-9 7-15 18-14 11 1 17 7 14 14-7-3-24-3-32 0z" />
+                  <path d="M31 11.5l1.5-4" class="look-stem" />
+                </g>
+                <g class="look-hat look-hat-aviator">
+                  <path d="M18 43c-3-16 1-27 14-27s17 11 14 27l-4 3c1-8 1-14-2-18-5-2-11-2-16 0-3 4-3 10-2 18z" />
+                  <path class="look-band" d="M20.5 27c7-4 16-4 23 0l-.6 2.6c-7-3.4-15-3.4-21.8 0z" />
+                </g>
+                <path class="look-strap" d="M19.5 34h25" />
+                <circle class="look-lens" cx="26.2" cy="36" r="4.6" />
+                <circle class="look-lens" cx="37.8" cy="36" r="4.6" />
+                <path class="look-glint" d="M24 34.8l2-1.6M35.6 34.8l2-1.6" />
+              </svg>
+              <div class="look-rows">
+                <div class="swatch-row">
+                  <span class="swatch-label" id="coat-label">Coat</span>
+                  <div class="swatch-set" id="coat-picker" role="group" aria-labelledby="coat-label">
+                    <button type="button" class="swatch-btn active" data-coat="#2c6e58" style="--swatch: #2c6e58" title="Botanical Green" aria-label="Botanical Green coat"></button>
+                    <button type="button" class="swatch-btn" data-coat="#7d3448" style="--swatch: #7d3448" title="Burgundy" aria-label="Burgundy coat"></button>
+                    <button type="button" class="swatch-btn" data-coat="#2e4a73" style="--swatch: #2e4a73" title="Observatory Navy" aria-label="Observatory Navy coat"></button>
+                    <button type="button" class="swatch-btn" data-coat="#9c6528" style="--swatch: #9c6528" title="Clocksmith Ochre" aria-label="Clocksmith Ochre coat"></button>
+                    <button type="button" class="swatch-btn" data-coat="#4f3d6e" style="--swatch: #4f3d6e" title="Plum Velvet" aria-label="Plum Velvet coat"></button>
+                    <button type="button" class="swatch-btn" data-coat="#3d454c" style="--swatch: #3d454c" title="Slate Iron" aria-label="Slate Iron coat"></button>
+                  </div>
+                </div>
+                <div class="swatch-row">
+                  <span class="swatch-label" id="goggle-label">Lens</span>
+                  <div class="swatch-set" id="goggle-picker" role="group" aria-labelledby="goggle-label">
+                    <button type="button" class="swatch-btn swatch-sm active" data-goggle="#f5b942" style="--swatch: #f5b942" title="Amber" aria-label="Amber lenses"></button>
+                    <button type="button" class="swatch-btn swatch-sm" data-goggle="#6ec5e9" style="--swatch: #6ec5e9" title="Sky" aria-label="Sky lenses"></button>
+                    <button type="button" class="swatch-btn swatch-sm" data-goggle="#68d391" style="--swatch: #68d391" title="Emerald" aria-label="Emerald lenses"></button>
+                    <button type="button" class="swatch-btn swatch-sm" data-goggle="#e879a8" style="--swatch: #e879a8" title="Rose" aria-label="Rose lenses"></button>
+                  </div>
+                </div>
+                <div class="swatch-row">
+                  <span class="swatch-label" id="hat-label">Hat</span>
+                  <div class="seg-group" id="hat-picker" role="group" aria-labelledby="hat-label">
+                    <button type="button" class="seg-btn active" data-hat="tophat">Top Hat</button>
+                    <button type="button" class="seg-btn" data-hat="beret">Beret</button>
+                    <button type="button" class="seg-btn" data-hat="aviator">Aviator</button>
+                    <button type="button" class="seg-btn" data-hat="none">None</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="hint-mode-row">
+              <span class="swatch-label" id="hint-mode-label">Hints (host)</span>
+              <div class="seg-group" id="hint-mode-picker" role="group" aria-labelledby="hint-mode-label">
+                <button type="button" class="seg-btn active" data-hint-mode="oracle">Oracle Game</button>
+                <button type="button" class="seg-btn" data-hint-mode="unlimited">Unlimited</button>
+                <button type="button" class="seg-btn" data-hint-mode="none">Off</button>
+              </div>
+            </div>
+
             <div class="lobby-actions">
               <button id="create-room-btn" class="btn-primary">Create Session</button>
               <div class="join-divider"><span>or join a session</span></div>
@@ -50,6 +118,7 @@
               <span class="code-value" id="waiting-room-code">----</span>
             </div>
             <div class="players-slots" id="players-slots"></div>
+            <div class="waiting-meta" id="waiting-hint-mode">Hints: Oracle Game</div>
             <span id="waiting-lan-url" class="hidden"></span>
             <div class="waiting-buttons">
               <button id="enter-manor-btn" class="btn-primary">Enter Manor</button>
@@ -87,7 +156,8 @@
           </span>
           <span class="hud-sep" aria-hidden="true"></span>
           <button class="hud-action" id="hint-hud-btn" title="Clockwork Oracle Hint Minigame (H)">
-            Oracle <span id="hint-cooldown-badge">Ready</span>
+            <span id="hint-btn-label">Oracle</span>
+            <span id="hint-cooldown-badge">Ready</span>
           </button>
           <span class="hud-sep" aria-hidden="true"></span>
           <button class="hud-icon-btn" id="audio-mute-btn" title="Mute / Unmute (M)" aria-label="Toggle audio">
@@ -118,13 +188,13 @@
         <div id="bottom-bar">
           <div id="inventory-bar"></div>
           <div id="tool-shortcuts">
-            <button class="tool-btn" id="btn-notebook" title="Field Notebook (N)">
+            <button class="tool-btn" id="btn-notebook" title="Field Notebook (E when not aiming, or N)">
               <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M4.5 3.5h9a2 2 0 0 1 2 2v11h-11a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1Z" />
                 <path d="M7.5 3.5v13" />
               </svg>
               <span>Notebook</span>
-              <kbd>N</kbd>
+              <kbd>E</kbd>
             </button>
             <button class="tool-btn" id="btn-calculator" title="Calculator (C)">
               <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">

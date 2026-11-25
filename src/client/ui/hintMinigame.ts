@@ -1,5 +1,6 @@
 import { PUZZLE_HINTS } from '../../shared/puzzles.js';
 import type {
+  HintEntry,
   MinigameSpark,
   MinigameState,
   PlayerSlot,
@@ -21,10 +22,11 @@ interface Callbacks {
   onCancel: () => void;
   onInput: (angle: number, pulse?: boolean) => void;
   onPickCasket: (index: 0 | 1 | 2) => void;
+  onRequestUnlimitedHint: (targetPuzzleId?: PuzzleId) => void;
   onSfx: (name: string) => void;
 }
 
-type ViewName = 'lobby' | 'playing' | 'fate' | 'result';
+type ViewName = 'unlimited' | 'lobby' | 'playing' | 'fate' | 'result';
 
 interface View {
   root: HTMLElement;
@@ -96,6 +98,7 @@ export function createHintMinigame(callbacks: Callbacks): HintMinigameController
   // View routing
   // ==========================================================
   function resolveView(): ViewName {
+    if (state?.hintMode === 'unlimited') return 'unlimited';
     if (!mg) return 'lobby';
     if (mg.phase === 'playing' || mg.phase === 'fate_draw') {
       latchedResult = null;
@@ -112,13 +115,15 @@ export function createHintMinigame(callbacks: Callbacks): HintMinigameController
       view?.dispose?.();
       viewName = next;
       view =
-        next === 'lobby'
-          ? lobbyView()
-          : next === 'playing'
-            ? playingView()
-            : next === 'fate'
-              ? fateView()
-              : resultView(latchedResult!);
+        next === 'unlimited'
+          ? unlimitedView()
+          : next === 'lobby'
+            ? lobbyView()
+            : next === 'playing'
+              ? playingView()
+              : next === 'fate'
+                ? fateView()
+                : resultView(latchedResult!);
       overlay.replaceChildren(view.root);
       overlay.dataset.view = next;
     }
@@ -127,6 +132,7 @@ export function createHintMinigame(callbacks: Callbacks): HintMinigameController
   }
 
   function open(nextState: WorldState, mySlot: PlayerSlot): void {
+    if (nextState.hintMode === 'none') return; // the host switched hints off
     state = nextState;
     mg = nextState.minigame;
     slot = mySlot;
@@ -170,7 +176,7 @@ export function createHintMinigame(callbacks: Callbacks): HintMinigameController
       if (!opened || ev.key !== 'Escape' || ev.defaultPrevented) return;
       ev.preventDefault();
       ev.stopImmediatePropagation();
-      if (viewName === 'lobby' || viewName === 'result') close();
+      if (viewName === 'unlimited' || viewName === 'lobby' || viewName === 'result') close();
     },
     true,
   );
@@ -183,6 +189,142 @@ export function createHintMinigame(callbacks: Callbacks): HintMinigameController
       closable &&
         el('button', { class: 'modal-close', title: 'Close (Esc)', 'aria-label': 'Close', onClick: close }, '✕'),
     );
+  }
+
+  // ==========================================================
+  // Unlimited hints
+  // ==========================================================
+  function unlimitedView(): View {
+    const PENDING_MS = 1500;
+    let pending: { puzzleId: string; count: number; until: number } | null = null;
+
+    const select = el('select', { class: 'oracle-select', id: 'unlimited-target' });
+    select.addEventListener('change', () => {
+      pickedPuzzle = select.value as PuzzleId;
+      callbacks.onSfx('dial_click');
+      update();
+    });
+    // Letters and arrows in the dropdown must not reach the game.
+    select.addEventListener('keydown', (ev) => ev.stopPropagation());
+
+    const revealBtn = el(
+      'button',
+      {
+        class: 'btn-primary oracle-ready',
+        onClick: () => {
+          if (revealBtn.disabled) return;
+          callbacks.onSfx('gear_place');
+          // One click reveals one tier, so ignore further clicks until the server answers.
+          pending = {
+            puzzleId: select.value,
+            count: hintsFor(select.value).length,
+            until: Date.now() + PENDING_MS,
+          };
+          callbacks.onRequestUnlimitedHint((select.value || undefined) as PuzzleId | undefined);
+          renderButton();
+        },
+      },
+      'Reveal Next Hint',
+    );
+    const status = el('p', { class: 'oracle-status', role: 'status' });
+    const list = el('div', { class: 'unlimited-hint-list', 'aria-live': 'polite' });
+    const root = el(
+      'div',
+      { class: 'oracle-card unlimited-hints-view' },
+      header('Hint Ledger', true),
+      el(
+        'p',
+        { class: 'oracle-blurb' },
+        'Unlimited hints are enabled for this session. Choose any unsolved mechanism to reveal progressive clues.',
+      ),
+      el(
+        'label',
+        { class: 'oracle-field', for: 'unlimited-target' },
+        el('span', {}, 'Mechanism'),
+        select,
+      ),
+      revealBtn,
+      status,
+      list,
+    );
+
+    /** Revealed hints for a puzzle, one per tier, gentlest first. */
+    function hintsFor(puzzleId: string): HintEntry[] {
+      const byTier = new Map<number, HintEntry>();
+      for (const h of state?.unlockedHints ?? []) {
+        if (h.puzzleId === puzzleId && !byTier.has(h.tier)) byTier.set(h.tier, h);
+      }
+      return [...byTier.values()].sort((a, b) => a.tier - b.tier);
+    }
+
+    let optionsKey = '';
+    function renderOptions(): void {
+      if (!state) return;
+      const tracks = PUZZLE_HINTS.filter((t) => !state!.solvedPuzzles[t.puzzleId]).sort(
+        (a, b) => a.order - b.order,
+      );
+      const labels = tracks.map(
+        (t) => `${t.order}. ${t.title} — ${hintsFor(t.puzzleId).length}/3 hints revealed`,
+      );
+      const key = labels.join('|');
+      if (key !== optionsKey) {
+        optionsKey = key;
+        select.replaceChildren(...tracks.map((t, i) => el('option', { value: t.puzzleId }, labels[i])));
+      }
+      // Stay on the player's choice until it is solved, then move on to the earliest unsolved one.
+      const value = tracks.find((t) => t.puzzleId === pickedPuzzle)?.puzzleId ?? tracks[0]?.puzzleId;
+      if (value && select.value !== value) select.value = value;
+      select.disabled = tracks.length === 0;
+    }
+
+    function renderButton(): void {
+      const count = hintsFor(select.value).length;
+      if (
+        pending &&
+        (pending.puzzleId !== select.value || count > pending.count || Date.now() >= pending.until)
+      ) {
+        pending = null;
+      }
+      const allSolved = select.options.length === 0;
+      revealBtn.disabled = allSolved || count >= 3 || pending !== null;
+      const text = allSolved
+        ? 'Every mechanism is solved.'
+        : count >= 3
+          ? 'All three hints for this mechanism are revealed.'
+          : '';
+      if (status.textContent !== text) status.textContent = text;
+      status.classList.toggle('hidden', !text);
+    }
+
+    let listKey: string | null = null;
+    function renderList(): void {
+      const hints = hintsFor(select.value);
+      const key = `${select.value}|${hints.map((h) => h.id).join(',')}`;
+      if (key === listKey) return;
+      listKey = key;
+      list.replaceChildren(
+        ...(hints.length > 0
+          ? hints.map((h) =>
+              el(
+                'article',
+                { class: 'unlimited-hint' },
+                el('span', { class: `tier-badge tier-${h.tier}` }, `Tier ${h.tier}`),
+                el('p', {}, h.text),
+              ),
+            )
+          : select.options.length > 0
+            ? [el('p', { class: 'unlimited-empty' }, 'No hints revealed for this mechanism yet.')]
+            : []),
+      );
+      list.scrollTop = list.scrollHeight;
+    }
+
+    function update(): void {
+      renderOptions();
+      renderButton();
+      renderList();
+    }
+    return { root, update, tick: renderButton };
   }
 
   // ==========================================================

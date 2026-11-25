@@ -1,5 +1,13 @@
 import * as THREE from 'three';
-import { ItemId, PlayerSlot, WorldState } from '../shared/types.js';
+import {
+  HatStyle,
+  HintMode,
+  ItemId,
+  PlayerAppearance,
+  PlayerSlot,
+  WorldState,
+} from '../shared/types.js';
+import { computeFloorHeight } from '../shared/worldLayout.js';
 import { LanNetworkClient } from './network.js';
 import { buildSolsticeWorld, BuiltWorld } from './worldBuilder.js';
 import { FirstPersonController } from './playerController.js';
@@ -31,6 +39,45 @@ let victoryShown = false;
 let lastTransformSentAt = 0;
 let coopBannerTimer: ReturnType<typeof setTimeout> | null = null;
 
+// === CHARACTER CUSTOMIZATION & HOST HINT MODE ===
+const APPEARANCE_KEY = 'solstice_appearance_v1';
+let selectedHintMode: HintMode = 'oracle';
+let localAppearance: PlayerAppearance = loadAppearance();
+
+function loadAppearance(): PlayerAppearance {
+  const fallback: PlayerAppearance = {
+    coatColor: '#2c6e58',
+    hatStyle: 'tophat',
+    goggleColor: '#f5b942',
+  };
+  try {
+    const raw = localStorage.getItem(APPEARANCE_KEY);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw) as Partial<PlayerAppearance>;
+    return {
+      coatColor: typeof parsed.coatColor === 'string' ? parsed.coatColor : fallback.coatColor,
+      hatStyle:
+        parsed.hatStyle === 'tophat' ||
+        parsed.hatStyle === 'beret' ||
+        parsed.hatStyle === 'aviator' ||
+        parsed.hatStyle === 'none'
+          ? parsed.hatStyle
+          : fallback.hatStyle,
+      goggleColor: typeof parsed.goggleColor === 'string' ? parsed.goggleColor : fallback.goggleColor,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function saveAppearance(): void {
+  try {
+    localStorage.setItem(APPEARANCE_KEY, JSON.stringify(localAppearance));
+  } catch {
+    // ignore storage errors
+  }
+}
+
 // === DOM ELEMENTS (LOBBY) ===
 const lobbyOverlay = document.getElementById('lobby-overlay')!;
 const hudRoot = document.getElementById('hud')!;
@@ -44,12 +91,17 @@ const joinRoomBtn = document.getElementById('join-room-btn')!;
 const lobbyJoinForm = document.getElementById('lobby-join-form')!;
 const lobbyWaiting = document.getElementById('lobby-waiting')!;
 const waitingRoomCode = document.getElementById('waiting-room-code')!;
+const waitingHintModeEl = document.getElementById('waiting-hint-mode');
 const playersSlotsEl = document.getElementById('players-slots')!;
 const enterManorBtn = document.getElementById('enter-manor-btn')!;
 const leaveRoomBtn = document.getElementById('leave-room-btn')!;
 const lobbyErrorEl = document.getElementById('lobby-error')!;
 const activeRoomsBox = document.getElementById('active-rooms-box')!;
 const activeRoomsList = document.getElementById('active-rooms-list')!;
+
+function myInventory(): ItemId[] {
+  return gameState?.players[myPlayerId]?.inventory ?? [];
+}
 
 function showLobbyError(msg: string | null): void {
   if (!msg) {
@@ -107,14 +159,23 @@ function renderWaitingPlayers(state: WorldState): void {
   const p1 = players.find((p) => p.slot === 1 && p.connected);
   const p2 = players.find((p) => p.slot === 2 && p.connected);
 
+  if (waitingHintModeEl) {
+    const labels: Record<HintMode, string> = {
+      oracle: 'Hints: Clockwork Oracle (2P Minigame)',
+      unlimited: 'Hints: Unlimited',
+      none: 'Hints: Turned Off',
+    };
+    waitingHintModeEl.textContent = labels[state.hintMode] ?? labels.oracle;
+  }
+
   playersSlotsEl.innerHTML = `
     <div class="player-slot-card ${p1 ? 'connected' : ''}">
-      <span class="slot-dot"></span>
+      <span class="slot-dot" style="${p1 ? `background:${p1.appearance.coatColor}` : ''}"></span>
       <span class="slot-name">${p1 ? escapeHtml(p1.name) : 'Waiting…'}</span>
       <span class="slot-badge">Player 1</span>
     </div>
     <div class="player-slot-card ${p2 ? 'connected' : ''}">
-      <span class="slot-dot"></span>
+      <span class="slot-dot" style="${p2 ? `background:${p2.appearance.coatColor}` : ''}"></span>
       <span class="slot-name">${p2 ? escapeHtml(p2.name) : 'Waiting for partner…'}</span>
       <span class="slot-badge">Player 2</span>
     </div>
@@ -135,11 +196,59 @@ function isAnyOverlayOpen(): boolean {
 
 function openOracleMinigame(): void {
   if (!gameState) return;
+  if (gameState.hintMode === 'none') {
+    hud.showToast('Hints are turned off for this session.', 'info');
+    return;
+  }
   controller.exitPointerLock();
   modals.close();
   tools.toggleNotebook(false);
   tools.toggleCalculator(false);
   hintMinigame.open(gameState, myPlayerSlot);
+}
+
+function passOrDropHeldItem(forcePartner = false): void {
+  if (!gameState || !inGame) return;
+  const inv = myInventory();
+  if (inv.length === 0) {
+    hud.showToast('You are not carrying any items.', 'info');
+    return;
+  }
+  const itemId =
+    controller.heldItem && inv.includes(controller.heldItem) ? controller.heldItem : inv[0];
+
+  const partner = Object.values(gameState.players).find(
+    (p) => p.id !== myPlayerId && p.connected,
+  );
+  const partnerDist = partner
+    ? Math.hypot(
+        partner.transform.x - controller.x,
+        partner.transform.y - controller.y,
+        partner.transform.z - controller.z,
+      )
+    : Infinity;
+
+  if (partner && (forcePartner || partnerDist <= 3.5)) {
+    network.send({ type: 'give_or_drop_item', itemId, mode: 'partner' });
+  } else {
+    const fx = -Math.sin(controller.yaw);
+    const fz = -Math.cos(controller.yaw);
+    const dropX = controller.x + fx * 1.05;
+    const dropZ = controller.z + fz * 1.05;
+    const dropY = computeFloorHeight(dropX, controller.y, dropZ);
+    network.send({
+      type: 'give_or_drop_item',
+      itemId,
+      mode: 'drop',
+      x: dropX,
+      y: dropY,
+      z: dropZ,
+    });
+  }
+
+  if (controller.heldItem === itemId) controller.heldItem = null;
+  if (itemId === 'tool_uv_lamp') controller.uvOn = false;
+  audio.playSfx('dial_click');
 }
 
 function performInteract(): void {
@@ -149,6 +258,12 @@ function performInteract(): void {
 
   if (obj.actionType === 'clue' && obj.clueId) {
     network.send({ type: 'discover_clue', clueId: obj.clueId });
+    if (obj.clueId.startsWith('clue_uv_frame_')) {
+      const idx = Number(obj.clueId.replace('clue_uv_frame_', ''));
+      if (Number.isInteger(idx) && idx >= 0 && idx <= 3) {
+        network.send({ type: 'uv_reveal', frameIndex: idx });
+      }
+    }
     controller.exitPointerLock();
     audio.playSfx('dial_click');
     modals.openClue(obj.clueId, gameState);
@@ -177,6 +292,14 @@ function performInteract(): void {
       openOracleMinigame();
       return;
     }
+    if (obj.id === 'partner_hand_item') {
+      passOrDropHeldItem(true);
+      return;
+    }
+    if (obj.id.startsWith('prop_')) {
+      network.send({ type: 'toggle_prop', propId: obj.id });
+      return;
+    }
     network.send({ type: 'interact', targetId: obj.id });
   }
 }
@@ -189,8 +312,16 @@ function triggerCoopPing(): void {
 
 function toggleUvLamp(): void {
   if (!gameState || !inGame) return;
-  if (!gameState.inventory.includes('tool_uv_lamp')) {
-    hud.showToast('No UV Lantern in inventory.', 'warning');
+  if (!myInventory().includes('tool_uv_lamp')) {
+    const partner = Object.values(gameState.players).find(
+      (p) => p.id !== myPlayerId && p.inventory.includes('tool_uv_lamp'),
+    );
+    hud.showToast(
+      partner
+        ? `${partner.name} carries the UV Lantern — have them pass it with G.`
+        : 'No UV Lantern in your inventory.',
+      'warning',
+    );
     audio.playSfx('error');
     return;
   }
@@ -235,12 +366,12 @@ function initThreeAndUi(): void {
     },
     onOpenNotebook: () => {
       if (!inGame) return;
-      controller.exitPointerLock();
+      if (!tools.isNotebookOpen()) controller.exitPointerLock();
       tools.toggleNotebook();
     },
     onOpenCalculator: () => {
       if (!inGame) return;
-      controller.exitPointerLock();
+      if (!tools.isCalculatorOpen()) controller.exitPointerLock();
       tools.toggleCalculator();
     },
     onOpenOracle: () => openOracleMinigame(),
@@ -285,6 +416,9 @@ function initThreeAndUi(): void {
   hintMinigame = createHintMinigame({
     onReady: (targetPuzzleId) => {
       network.send({ type: 'minigame_ready', targetPuzzleId });
+    },
+    onRequestUnlimitedHint: (targetPuzzleId) => {
+      network.send({ type: 'request_unlimited_hint', targetPuzzleId });
     },
     onCancel: () => {
       network.send({ type: 'minigame_cancel' });
@@ -358,9 +492,18 @@ function initThreeAndUi(): void {
 
     if (hintMinigame.isOpen()) return; // let minigame handle A/D/Space cleanly!
 
-    if (e.code === 'KeyE' && !modals.isOpen() && controller.isPointerLocked) {
+    // Smart E key: interacts when aiming at an object, otherwise toggles Field Notebook!
+    if (e.code === 'KeyE' && !modals.isOpen()) {
       e.preventDefault();
-      performInteract();
+      if (controller.isPointerLocked && controller.targetedObject) {
+        performInteract();
+      } else {
+        if (!tools.isNotebookOpen()) controller.exitPointerLock();
+        tools.toggleNotebook();
+      }
+    } else if (e.code === 'KeyG' && !modals.isOpen()) {
+      e.preventDefault();
+      passOrDropHeldItem(false);
     } else if (e.code === 'KeyF' && !modals.isOpen()) {
       e.preventDefault();
       toggleUvLamp();
@@ -382,9 +525,10 @@ function initThreeAndUi(): void {
       audio.init();
       audio.setMuted(!audio.isMuted());
     } else if (e.code.startsWith('Digit') && !modals.isOpen()) {
+      const inv = myInventory();
       const idx = Number(e.code.replace('Digit', '')) - 1;
-      if (idx >= 0 && idx < gameState.inventory.length) {
-        const item = gameState.inventory[idx];
+      if (idx >= 0 && idx < inv.length) {
+        const item = inv[idx];
         controller.heldItem = item;
         if (item === 'tool_uv_lamp') {
           toggleUvLamp();
@@ -419,10 +563,63 @@ function enterManor(): void {
   controller.requestPointerLock();
 }
 
+function syncCustomizerDom(): void {
+  document.querySelectorAll<HTMLElement>('#coat-picker [data-coat]').forEach((btn) => {
+    const active = btn.dataset.coat === localAppearance.coatColor;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', String(active));
+  });
+  document.querySelectorAll<HTMLElement>('#hat-picker [data-hat]').forEach((btn) => {
+    const active = btn.dataset.hat === localAppearance.hatStyle;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', String(active));
+  });
+  document.querySelectorAll<HTMLElement>('#goggle-picker [data-goggle]').forEach((btn) => {
+    const active = btn.dataset.goggle === localAppearance.goggleColor;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', String(active));
+  });
+  document.querySelectorAll<HTMLElement>('#hint-mode-picker [data-hint-mode]').forEach((btn) => {
+    const active = btn.dataset.hintMode === selectedHintMode;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', String(active));
+  });
+}
+
 function bindLobbyEvents(): void {
   // Default random cozy apprentice name if empty
   const names = ['Horologist', 'Starweaver', 'Clocksmith', 'Botanist', 'Luminist'];
   playerNameInput.value = names[Math.floor(Math.random() * names.length)];
+
+  // Character Customizer & Hint Mode controls
+  syncCustomizerDom();
+  document.getElementById('coat-picker')?.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-coat]');
+    if (!btn?.dataset.coat) return;
+    localAppearance.coatColor = btn.dataset.coat;
+    saveAppearance();
+    syncCustomizerDom();
+  });
+  document.getElementById('hat-picker')?.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-hat]');
+    if (!btn?.dataset.hat) return;
+    localAppearance.hatStyle = btn.dataset.hat as HatStyle;
+    saveAppearance();
+    syncCustomizerDom();
+  });
+  document.getElementById('goggle-picker')?.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-goggle]');
+    if (!btn?.dataset.goggle) return;
+    localAppearance.goggleColor = btn.dataset.goggle;
+    saveAppearance();
+    syncCustomizerDom();
+  });
+  document.getElementById('hint-mode-picker')?.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-hint-mode]');
+    if (!btn?.dataset.hintMode) return;
+    selectedHintMode = btn.dataset.hintMode as HintMode;
+    syncCustomizerDom();
+  });
 
   copyLanBtn.addEventListener('click', () => {
     navigator.clipboard?.writeText(lanUrlEl.textContent || '').catch(() => {});
@@ -436,7 +633,12 @@ function bindLobbyEvents(): void {
     showLobbyError(null);
     try {
       await network.connect();
-      network.send({ type: 'create_room', playerName: playerNameInput.value.trim() || 'Apprentice 1' });
+      network.send({
+        type: 'create_room',
+        playerName: playerNameInput.value.trim() || 'Apprentice 1',
+        hintMode: selectedHintMode,
+        appearance: localAppearance,
+      });
     } catch (err) {
       showLobbyError((err as Error).message);
     }
@@ -466,6 +668,7 @@ function bindLobbyEvents(): void {
         roomCode: code,
         playerName: playerNameInput.value.trim() || 'Apprentice 2',
         playerId: savedPlayerId,
+        appearance: localAppearance,
       });
     } catch (err) {
       showLobbyError((err as Error).message);
@@ -525,6 +728,15 @@ function bindNetworkMessages(): void {
       const prevPhase = gameState?.minigame.phase;
       gameState = msg.state;
 
+      // Clear local heldItem / uvOn if it was consumed or handed away
+      const inv = myInventory();
+      if (controller.heldItem && !inv.includes(controller.heldItem)) {
+        controller.heldItem = null;
+      }
+      if (controller.uvOn && !inv.includes('tool_uv_lamp')) {
+        controller.uvOn = false;
+      }
+
       if (!inGame) {
         renderWaitingPlayers(gameState);
       } else {
@@ -534,6 +746,7 @@ function bindNetworkMessages(): void {
 
         // Auto-open Hint Minigame overlay if partner started it or fate_draw began!
         if (
+          gameState.hintMode === 'oracle' &&
           (gameState.minigame.phase === 'playing' || gameState.minigame.phase === 'fate_draw') &&
           !hintMinigame.isOpen()
         ) {
@@ -607,9 +820,7 @@ function animate(now: number): void {
   prevTime = now;
 
   if (gameState) {
-    const { moving } = controller.update(dt, gameState, world, (frameIndex) => {
-      network.send({ type: 'uv_reveal', frameIndex });
-    });
+    const { moving } = controller.update(dt, gameState, myPlayerId, world);
 
     // Update 3D world animations, doors, solar beams, partner avatar, pings
     world.updateFromState(gameState, myPlayerId, dt, now / 1000);
