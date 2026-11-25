@@ -3834,10 +3834,10 @@ button.casket:disabled {
   box-shadow: none;
 }
 
-/* Pointer-lock banner: compact single-line pill */
+/* Pointer-lock banner: compact single-line pill cleanly above inventory bar */
 #pointer-lock-banner {
   top: auto;
-  bottom: 74px;
+  bottom: 122px;
   left: 50%;
   transform: translateX(-50%);
   width: auto;

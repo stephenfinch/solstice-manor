@@ -207,13 +207,13 @@ export const FLOOR_PLATES: Record<string, FloorPlateZone> = {
   finale_pad_right: { id: 'finale_pad_right', x: 3.2, y: 0, z: -24.8, radius: 1.25 },
 };
 
-// Walkable ramp geometry connecting Courtyard (X: 9.2..11.8, Z: -12.5, Y: 0)
-// up to Observatory Sky-Deck (X: 9.2..11.8, Z: -19.5, Y: 4.6), then turning West onto deck!
+// Walkable ramp geometry connecting Courtyard (X: 8.8..11.9, Z: -10.5, Y: 0)
+// up to a wide 2.7m top landing on the Observatory Sky-Deck (Z: -20.5..-17.8, Y: 4.6)
 export const SKYLIFT_RAMP = {
   minX: 8.8,
   maxX: 11.9,
   zStart: -10.5, // Y = 0
-  zEnd: -19.5, // Y = 4.6
+  zEnd: -17.8, // Y = 4.6 (leaves Z: -20.5..-17.8 as a full flat 3.1m x 2.7m top landing!)
   topY: 4.6,
 };
 
@@ -365,7 +365,7 @@ export const WORLD_COLLIDERS: BoxCollider[] = [
     doorId: 'skylift_door',
   },
   // Ramp inner wall separating ramp from courtyard ground
-  { id: 'ramp_inner_wall', minX: 8.5, maxX: 8.9, minY: 0, maxY: 4.5, minZ: -19.5, maxZ: -10.4 },
+  { id: 'ramp_inner_wall', minX: 8.5, maxX: 8.9, minY: 0, maxY: 4.5, minZ: -17.8, maxZ: -10.4 },
 
   // --- BOTANICAL CONSERVATORY (X: -26..-12, Z: -14..2) ---
   { id: 'cons_n', minX: -26.3, maxX: -12, minY: 0, maxY: 5.5, minZ: -14 - T, maxZ: -14 + T },
@@ -403,7 +403,7 @@ export const WORLD_COLLIDERS: BoxCollider[] = [
   { id: 'obs_rail_w', minX: -10.1, maxX: -9.6, minY: 4.5, maxY: 6.5, minZ: -20.6, maxZ: -13.1 },
   { id: 'obs_rail_n', minX: -10.1, maxX: 12.1, minY: 4.5, maxY: 6.5, minZ: -20.7, maxZ: -20.2 },
   { id: 'obs_rail_s', minX: -10.1, maxX: 8.8, minY: 4.5, maxY: 6.5, minZ: -13.5, maxZ: -13.0 },
-  { id: 'obs_rail_ramp_guard', minX: 8.5, maxX: 8.9, minY: 4.5, maxY: 6.5, minZ: -17.6, maxZ: -13.0 },
+  { id: 'obs_rail_ramp_guard', minX: 8.55, maxX: 8.9, minY: 4.5, maxY: 6.5, minZ: -17.8, maxZ: -13.0 },
   { id: 'obs_rail_e', minX: 11.8, maxX: 12.2, minY: 4.5, maxY: 6.5, minZ: -20.6, maxZ: -10.4 },
 ];
 

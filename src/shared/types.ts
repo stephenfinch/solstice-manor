@@ -262,6 +262,7 @@ export type ClientMessage =
   | { type: 'minigame_cancel' }
   | { type: 'minigame_input'; angle: number; pulse?: boolean }
   | { type: 'minigame_pick_casket'; casketIndex: 0 | 1 | 2 }
+  | { type: 'debug_unlock_all' }
   | { type: 'request_sync' };
 
 // Server -> Client WebSocket Messages

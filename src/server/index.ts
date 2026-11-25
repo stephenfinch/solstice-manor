@@ -242,6 +242,9 @@ wss.on('connection', (ws: ClientSocket) => {
       case 'minigame_pick_casket':
         room.handleMinigamePickCasket(ws.playerId, msg.casketIndex);
         break;
+      case 'debug_unlock_all':
+        room.handleDebugUnlockAll();
+        break;
       case 'request_sync':
         send(ws, { type: 'state_sync', state: room.getSanitizedState() });
         break;

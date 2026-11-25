@@ -108,9 +108,9 @@ describe('Solstice Manor — 3D Walkability, Ramp Elevation & Anti-Softlock Audi
     minX: 10.35 - 1.55,
     maxX: 10.35 + 1.55,
     minY: 0,
-    maxY: 3.9,
-    minZ: -19.45 - 0.15,
-    maxZ: -19.45 + 0.15,
+    maxY: 4.2,
+    minZ: -17.8 - 0.175,
+    maxZ: -17.8 + 0.175,
   };
   const colliders = [...WORLD_COLLIDERS, rampEndCollider];
 

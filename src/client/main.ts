@@ -329,6 +329,12 @@ function initThreeAndUi(): void {
   // Keyboard shortcuts
   window.addEventListener('keydown', (e) => {
     if (!inGame || !gameState) return;
+    // Secret debug combo: Ctrl + Shift + U unlocks all wing doors & grants reusable tools
+    if (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && e.code === 'KeyU') {
+      e.preventDefault();
+      network.send({ type: 'debug_unlock_all' });
+      return;
+    }
     // Don't hijack typing inside text inputs/textareas/selects (allow range sliders!)
     if (isTypingTarget(e.target)) {
       if (e.code === 'Escape') {

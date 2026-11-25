@@ -71,6 +71,7 @@ export class GameRoom {
   private hooks: BroadcastHooks;
   private tickTimer: ReturnType<typeof setInterval> | null = null;
   private lastTickAt = Date.now();
+  private debugUnlocked = false;
 
   constructor(roomCode: string, hooks: BroadcastHooks) {
     this.hooks = hooks;
@@ -236,7 +237,7 @@ export class GameRoom {
       const wasEmpty = pz.foyerPlatePressedBy.length === 0;
       pz.foyerPlatePressedBy = foyerPlate;
       changed = true;
-      if (!this.state.solvedPuzzles.p2_tea_cipher) {
+      if (!this.state.solvedPuzzles.p2_tea_cipher && !this.debugUnlocked) {
         this.state.doors.tea_north_grille = foyerPlate.length > 0;
         if (wasEmpty && foyerPlate.length > 0) {
           this.emitEvent('sfx', '', 'plate_step');
@@ -434,6 +435,30 @@ export class GameRoom {
 
   public handleUpdateNotes(text: string): void {
     this.state.sharedNotes = text.slice(0, 6000);
+    this.syncAll();
+  }
+
+  public handleDebugUnlockAll(): void {
+    this.debugUnlocked = true;
+    // Open every interior/exterior wing door (keep solstice_gate closed so victory doesn't fire)
+    this.state.doors.courtyard_door = true;
+    this.state.doors.tea_north_grille = true;
+    this.state.doors.study_door = true;
+    this.state.doors.conservatory_door = true;
+    this.state.doors.workshop_door = true;
+    this.state.doors.skylift_door = true;
+
+    // Grant reusable exploration tools if not yet held so every room can be tested freely
+    for (const tool of ['tool_uv_lamp', 'tool_prism'] as const) {
+      if (!this.state.inventory.includes(tool)) {
+        this.state.inventory.push(tool);
+      }
+      if (!this.state.collectedWorldItems.includes(tool)) {
+        this.state.collectedWorldItems.push(tool);
+      }
+    }
+
+    this.emitEvent('info', 'Debug: all doors unlocked & tools granted.', 'door_open');
     this.syncAll();
   }
 

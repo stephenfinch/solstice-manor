@@ -2056,7 +2056,8 @@ function buildTea(c: Ctx): void {
   ck.box(M.brass, 2.26, 0.05, 0.66, 0, 0.85, 0);
   const deck = ck.at(0, 1.12, 0.06, 0, -0.6);
   deck.box(M.walnut, 2.14, 0.62, 0.1, 0, -0.31, -0.05);
-  deck.box(M.brass, 2.18, 0.66, 0.04, 0, -0.33, -0.08);
+  // Offset cleanly behind walnut back face (no coplanar Z-fighting!)
+  deck.box(M.brass, 2.18, 0.66, 0.03, 0, -0.33, -0.118);
   const symTex: Partial<Record<CipherSymbol, THREE.Texture>> = {};
   for (const s of CIPHER_SYMBOLS) symTex[s.id] = makeSymbolTexture(s.id);
   const cons = group(scene, cx, 1.12, 11.76, 0);
@@ -3632,7 +3633,7 @@ function buildObservatory(c: Ctx): void {
   const { minX, maxX, minZ, maxZ } = OBSERVATORY_DECK;
   const RX0 = SKYLIFT_RAMP.minX;
 
-  // Deck slabs (the ramp footprint stays open)
+  // Deck slabs (the ramp footprint stays open; Z: minZ..SKYLIFT_RAMP.zEnd is a wide 2.7m top landing!)
   k.floor(M.deckWood, minX, RX0, minZ, maxZ, Y);
   k.floor(M.deckWood, RX0, maxX, minZ, SKYLIFT_RAMP.zEnd, Y);
   k.box(M.plaster, RX0 - minX, 0.28, maxZ - minZ, (minX + RX0) / 2, Y - 0.29, (minZ + maxZ) / 2);
@@ -3642,7 +3643,10 @@ function buildObservatory(c: Ctx): void {
   k.box(M.brassDark, 0.12, 0.4, maxZ - minZ, minX - 0.04, Y - 0.4, (minZ + maxZ) / 2);
   k.box(M.brass, RX0 - minX, 0.02, 0.1, (minX + RX0) / 2, Y - 0.005, maxZ - 0.45);
   k.box(M.brass, maxX - minX, 0.02, 0.1, (minX + maxX) / 2, Y - 0.005, minZ + 0.6);
-  k.box(M.brass, 0.14, 0.08, SKYLIFT_RAMP.zEnd * -1 - 13.2, RX0 - 0.05, Y, (maxZ + SKYLIFT_RAMP.zEnd) / 2);
+  // Flush brass threshold strip where the top of the ramp meets the flat wooden landing!
+  k.box(M.brass, maxX - RX0, 0.03, 0.16, (RX0 + maxX) / 2, Y - 0.005, SKYLIFT_RAMP.zEnd);
+  // Brass curb along the stairwell cutout edge
+  k.box(M.brass, 0.14, 0.08, maxZ - SKYLIFT_RAMP.zEnd, RX0 - 0.05, Y, (maxZ + SKYLIFT_RAMP.zEnd) / 2);
   // Underside joists + slender columns on the terrace side
   for (let x = -9; x <= 8; x += 2.43) k.box(M.walnut, 0.22, 0.26, maxZ - minZ - 0.3, x, Y - 0.54, (minZ + maxZ) / 2);
   for (const x of [-9.4, -3.6, 3.6, 8.5]) {
@@ -3654,50 +3658,54 @@ function buildObservatory(c: Ctx): void {
   railing(k, M, -9.85, -20.45, 11.95, -20.45, Y);
   railing(k, M, -9.85, -20.4, -9.85, -13.25, Y);
   railing(k, M, -9.85, -13.25, 8.75, -13.25, Y);
+  // Full brass guard railing along the stairwell opening beside the ramp (leaves Z: -20.4..-17.8 landing wide open!)
+  railing(k, M, 8.75, -13.25, 8.75, SKYLIFT_RAMP.zEnd, Y);
   railing(k, M, 12.0, -20.4, 12.0, -14.0, Y);
 
   // --- Ramp ---
   const z0 = SKYLIFT_RAMP.zStart;
   const z1 = SKYLIFT_RAMP.zEnd;
+  const rampLen = z0 - z1;
   const X0 = 8.8;
   const X1 = 11.9;
   k.quad(M.brassDark, [X0, 0.005, z0], [X1, 0.005, z0], [X1, Y, z1], [X0, Y, z1]);
   k.quad(M.trimStone, [X0, -0.25, z0], [X0, Y - 0.25, z1], [X1, Y - 0.25, z1], [X1, -0.25, z0]);
-  const slope = Math.atan2(Y, z0 - z1);
-  for (let i = 1; i < 22; i++) {
-    const t = i / 22;
+  const slope = Math.atan2(Y, rampLen);
+  for (let i = 1; i < 20; i++) {
+    const t = i / 20;
     k.box(M.brass, X1 - X0 - 0.3, 0.025, 0.07, (X0 + X1) / 2, Y * t - 0.002, z0 + (z1 - z0) * t, 0, slope);
   }
   // Inner flank: masonry below the slope, brass lattice above (collider X 8.5..8.9)
   for (const x of [8.5, 8.9]) {
     const a = [x, 0, -10.4];
-    const b = [x, 0, -19.5];
-    const cc = [x, 4.5, -19.5];
+    const b = [x, 0, z1];
+    const cc = [x, 4.5, z1];
     const d = [x, 0.35, -10.4];
     if (x < 8.7) k.quad(M.ashlar, b, a, d, cc);
     else k.quad(M.ashlar, a, b, cc, d);
   }
-  k.quad(M.trimStone, [8.46, 0.36, -10.4], [8.94, 0.36, -10.4], [8.94, 4.52, -19.5], [8.46, 4.52, -19.5]);
+  k.quad(M.trimStone, [8.46, 0.36, -10.4], [8.94, 0.36, -10.4], [8.94, 4.52, z1], [8.46, 4.52, z1]);
   k.quad(M.ashlar, [8.5, 0, -10.4], [8.9, 0, -10.4], [8.9, 0.35, -10.4], [8.5, 0.35, -10.4]);
-  k.box(M.brass, 0.1, 0.1, 9.1, 8.7, 4.42, -14.95);
-  for (let i = 0; i <= 26; i++) {
-    const z = -10.4 - i * 0.345;
-    const yb = 0.35 + (4.15 * (i * 0.345)) / 9.1;
+  const flankLen = -10.4 - z1;
+  k.box(M.brass, 0.1, 0.1, flankLen, 8.7, 4.42, (-10.4 + z1) / 2);
+  for (let i = 0; i <= 22; i++) {
+    const z = -10.4 - (i * flankLen) / 22;
+    const yb = 0.35 + (4.15 * i) / 22;
     if (yb < 4.35) k.cyl(i % 5 === 0 ? M.brassDark : M.brass, i % 5 === 0 ? 0.04 : 0.016, i % 5 === 0 ? 0.04 : 0.016, 4.42 - yb, 8.7, yb, z, 7);
   }
   for (const y of [1.4, 2.4, 3.4]) {
-    const zEnd = -10.4 - ((y - 0.35) / 4.15) * 9.1;
+    const zEnd = -10.4 - ((y - 0.35) / 4.15) * flankLen;
     k.box(M.brass, 0.04, 0.04, -10.4 - zEnd, 8.7, y, (-10.4 + zEnd) / 2);
   }
   {
-    const iv = k.at(8.86, 4.4, -15.4, Math.PI / 2);
-    iv.put(ivyGeo(5.2, 1.8, 130, 91), M.leaf);
-    iv.put(ivyGeo(5.2, 1.6, 40, 92), M.petalViolet);
+    const iv = k.at(8.86, 4.4, (-10.4 + z1) / 2, Math.PI / 2);
+    iv.put(ivyGeo(4.8, 1.8, 130, 91), M.leaf);
+    iv.put(ivyGeo(4.8, 1.6, 40, 92), M.petalViolet);
   }
-  // Masonry end wall beneath the top of the ramp
-  k.box(M.ashlar, 3.1, 4.3, 0.3, 10.35, 0, -19.45);
-  k.torus(M.trimStone, 1.0, 0.1, 10.35, 1.6, -19.61, 0, 0, 0, 24, Math.PI);
-  k.put(ivyGeo(3, 3.4, 130, 95), M.leafDark, 10.35, 4.3, -19.62, 0, Math.PI);
+  // Masonry end wall beneath the top of the ramp (supports the flat landing!)
+  k.box(M.ashlar, 3.1, 4.32, 0.3, 10.35, 0, z1);
+  k.torus(M.trimStone, 1.0, 0.1, 10.35, 1.6, z1 - 0.16, 0, 0, 0, 24, Math.PI);
+  k.put(ivyGeo(3, 3.4, 130, 95), M.leafDark, 10.35, 4.3, z1 - 0.17, 0, Math.PI);
 
   // --- Rotating orrery under the starry cupola ---
   const ox = -1;
@@ -4716,7 +4724,7 @@ const box = (id: string, x: number, z: number, w: number, d: number, h = 1.2, y 
  * the top of the Sky-Lift ramp, where the Sky-Garden otherwise leads around the locked gate.
  */
 export const DECOR_COLLIDERS: BoxCollider[] = [
-  box('ramp_end', 10.35, -19.45, 3.1, 0.3, 3.9),
+  box('ramp_end', 10.35, SKYLIFT_RAMP.zEnd, 3.1, 0.35, 4.2),
   box('clock', -3.75, 6.6, 1.1, 0.6, 3),
   box('lectern', 3.5, 8.5, 0.6, 0.6),
   box('hearth', 0, 17.3, 3.3, 0.8),
